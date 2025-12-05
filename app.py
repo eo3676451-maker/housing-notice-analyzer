@@ -54,20 +54,46 @@ def parse_location(text: str):
 #  분석 함수 3: 핵심 정보 추출
 # ============================
 def extract_core_info(text: str):
-    info = {"공급규모": None, "시행사": None, "시공사": None}
+    info = {
+        "공급규모": None,
+        "시행사": None,
+        "시공사": None,
+    }
+
     for line in text.splitlines():
         s = line.strip()
 
+        # 공급규모
         if not info["공급규모"] and ("공급규모" in s or "총 공급세대수" in s):
-            info["공급규모"] = s
+            cleaned = s
+            cleaned = cleaned.replace("■", "")
+            cleaned = cleaned.replace("●", "")
+            cleaned = cleaned.replace("공급규모", "")
+            cleaned = cleaned.replace("총 공급세대수", "")
+            cleaned = cleaned.replace(":", "")
+            cleaned = cleaned.strip()
+            info["공급규모"] = cleaned
 
+        # 시행사
         if not info["시행사"] and ("시행자" in s or "시행사" in s):
-            info["시행사"] = s
+            cleaned = s
+            cleaned = cleaned.replace("■", "").replace("●", "")
+            cleaned = cleaned.replace("시행자", "").replace("시행사", "")
+            cleaned = cleaned.replace(":", "")
+            cleaned = cleaned.strip()
+            info["시행사"] = cleaned
 
+        # 시공사
         if not info["시공사"] and ("시공자" in s or "시공사" in s):
-            info["시공사"] = s
+            cleaned = s
+            cleaned = cleaned.replace("■", "").replace("●", "")
+            cleaned = cleaned.replace("시공자", "").replace("시공사", "")
+            cleaned = cleaned.replace(":", "")
+            cleaned = cleaned.strip()
+            info["시공사"] = cleaned
 
     return info
+
 
 
 # ============================
