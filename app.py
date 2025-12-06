@@ -59,10 +59,22 @@ def normalize_company_name(name: str) -> str:
     if not name:
         return ""
     name = str(name)
+
+    # 줄바꿈 → 공백, 여러 공백 정리
+    name = name.replace("\n", " ")
     name = re.sub(r"\s+", " ", name).strip()
-    name = re.sub(r"(\)|주식회사|㈜|\(주\))[^가-힣A-Za-z0-9]*$", r"\1", name)
+
+    # 앞쪽에 붙는 불릿/특수문자 제거
+    name = name.lstrip("※*•-·[]() ")
+
+    # 뒤쪽에 붙는 설명(사업주체, 대표자 등) 잘라내기
+    name = re.sub(r"(주식회사|㈜|\(주\))[^가-힣A-Za-z0-9]*$", r"\1", name)
+
+    # 앞뒤 장식 제거
     name = name.strip(":-·,[]() ")
+
     return name.strip()
+
 
 
 # ============================
@@ -94,8 +106,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
         for pat in pats:
             for m in re.finditer(pat, norm):
                 name = normalize_company_name(m.group(1))
-                if name and name not in result[role]:
-                    result[role].append(name)
+                if name and len(name) <= 30 and name not in result[role]:result[role].append(name)
+
 
     simple_patterns = {
         "시행사": [
@@ -113,8 +125,7 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
         for pat in pats:
             for m in re.finditer(pat, norm):
                 name = normalize_company_name(m.group(1))
-                if name and name not in result[role]:
-                    result[role].append(name)
+                if name and len(name) <= 30 and name not in result[role]:result[role].append(name)
 
     combo_pattern = r"(시행|시공|분양대행)\s*[: ]\s*([^/]+)"
     for m in re.finditer(combo_pattern, norm):
@@ -126,8 +137,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
             role = "시공사"
         else:
             role = "분양대행사"
-        if name and name not in result[role]:
-            result[role].append(name)
+        if name and len(name) <= 30 and name not in result[role]:result[role].append(name)
+
 
     return result
 
@@ -179,30 +190,45 @@ def extract_core_info(text: str):
 # ============================
 def extract_move_in_date(text: str) -> str | None:
     """
-    '입주 시기', '입주시기', '입주 예정' 등이 들어간 줄에서
+    '입주 시기', '입주시기', '입주 예정' 이 들어간 줄에서
     'YYYY년 MM월' 또는 'YYYY.MM' 패턴을 찾아 반환
     """
+    target_line = None
+
     for line in text.splitlines():
         s = line.strip()
-        if ("입주" in s and "시기" in s) or ("입주" in s and "예정" in s):
-            # 2029년 2월, 2029년 02월
-            m = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월", s)
-            if m:
-                year = int(m.group(1))
-                month = int(m.group(2))
-                return f"{year}년 {month}월"
+        if not s:
+            continue
 
-            # 2029.2 또는 2029.02
-            m2 = re.search(r"(\d{4})\.(\d{1,2})", s)
-            if m2:
-                year = int(m2.group(1))
-                month = int(m2.group(2))
-                return f"{year}년 {month}월"
+        no_space = s.replace(" ", "")
 
-            # 위 패턴이 없으면 해당 줄 전체 반환
-            return s
+        # '입주 시기', '입주시기', '입주 예정' 이 포함된 줄만 후보로 사용
+        if "입주시기" in no_space or "입주시기" in no_space or "입주예정" in no_space:
+            target_line = s
+            break
 
-    return None
+    if not target_line:
+        return None
+
+    # 1) 2029년 2월, 2029년 02월
+    m = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월", target_line)
+    if m:
+        year = int(m.group(1))
+        month = int(m.group(2))
+        return f"{year}년 {month}월"
+
+    # 2) 2029.2, 2029.02
+    m2 = re.search(r"(\d{4})\.(\d{1,2})", target_line)
+    if m2:
+        year = int(m2.group(1))
+        month = int(m2.group(2))
+        return f"{year}년 {month}월"
+
+    # 3) 그래도 못 찾으면 줄 자체를 짧게 잘라서 반환 (너무 길면 ... 처리)
+    if len(target_line) > 40:
+        return target_line[:40] + "..."
+    return target_line
+
 
 
 # ============================
