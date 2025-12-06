@@ -58,38 +58,31 @@ def parse_location(text: str):
 def normalize_company_name(name: str) -> str:
     if not name:
         return ""
+    name = str(name)
 
-    # 기본 공백 정리
-    name = str(name).replace("\n", " ")
+    # 줄바꿈 → 공백, 여러 공백 정리
+    name = name.replace("\n", " ")
     name = re.sub(r"\s+", " ", name).strip()
 
-    # 앞쪽 불릿 제거
+    # 앞쪽에 붙는 불릿/특수문자 제거
     name = name.lstrip("※*•-·[]() ")
 
-    # 공백 + (주) → (주)
+    # (주) / ㈜ 표기 정규화
     name = name.replace(" (주)", "(주)").replace("(주) ", "(주)")
-    name = name.replace("㈜ ", "㈜").replace(" ㈜", "㈜")
+    name = name.replace(" ㈜", "㈜").replace("㈜ ", "㈜")
 
-    # 회사명 후 괄호가 열렸는데 닫히지 않은 경우 자동 보완
+    # 닫히지 않은 (주 보정
+    if name.endswith("(주"):
+        name = name + ")"
     if re.search(r"\(주$", name):
         name = name + ")"
 
-    # "(주" 로 끝나도 자동 보완
-    if name.endswith("(주"):
-        name = name + ")"
-
-    # "(주))" 같은 잘못된 패턴 정리
-    name = name.replace("(주))", "(주)").replace("((주))", "(주)")
-
-    # "㈜)" 같은 잘못된 패턴 정리
-    name = name.replace("㈜)", "㈜")
-
-    # 불필요한 문장 잘라내기: 회사명 뒤에 오는 길고 긴 문장은 제거
-    m = re.match(r"([가-힣A-Za-z0-9㈜(주\)]+)", name)
-    if m:
-        name = m.group(1)
+    # '※' 이후로는 주석 성격이 강하니 잘라낸다
+    if "※" in name:
+        name = name.split("※", 1)[0].strip()
 
     return name.strip()
+
 
 
 
