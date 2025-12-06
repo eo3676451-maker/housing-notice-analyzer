@@ -658,7 +658,8 @@ if uploaded:
     with pdfplumber.open(uploaded) as pdf:
         for p in pdf.pages:
             text += (p.extract_text() or "") + "\n"
-     # 1-1) 불필요 문단 제거 (4~7, 11항 유의사항 등)
+
+    # 1-1) 불필요 문단 제거 (4~7, 11항 유의사항 등)
     text = filter_irrelevant_sections(text)
 
 
@@ -698,7 +699,7 @@ if uploaded:
 
     st.write(f"- **중도금 대출 조건:** {loan_cond or '정보 없음'}")
 
-    # ---------------------------
+        # ---------------------------
     # 청약 일정
     # ---------------------------
     st.subheader("📅 청약 일정 자동 분류")
@@ -713,7 +714,7 @@ if uploaded:
         "계약체결",
     ]
 
-        rows = []
+    rows = []
     for key in order:
         val = schedule.get(key)
         rows.append({"항목": key, "일정": val or "정보 없음"})
@@ -741,11 +742,12 @@ if uploaded:
     )
 
     st.download_button(
-        label="📥 엑셀로 다운로드",
+        label="📥 엑셀 다운로드",
         data=excel_bytes,
         file_name=f"{complex_name or '분양단지'}_모집공고_자동분석.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
 
 else:
     st.info("PDF 파일을 업로드해주세요.")
