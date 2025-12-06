@@ -517,7 +517,7 @@ def extract_loan_condition(text: str):
 # ============================
 #  엑셀 다운로드용 파일 생성
 # ============================
-def make_excel_file(
+def def make_excel_file(
     complex_name: str,
     location: str,
     core: dict,
@@ -527,8 +527,10 @@ def make_excel_file(
     final_agency: str | None,
     loan_cond: str | None,
     schedule_rows: list,
+    supply_rows: list,      # 🔹 추가
+    price_rows: list,       # 🔹 추가
 ) -> BytesIO:
-    # 요약 시트 기본 정보
+    # 요약 시트 + 청약일정
     summary_rows = [
         {"항목": "단지명", "값": complex_name},
         {"항목": "공급위치", "값": location},
@@ -540,21 +542,26 @@ def make_excel_file(
         {"항목": "중도금 대출 조건", "값": loan_cond or ""},
     ]
 
-    # 🔹 청약 일정도 핵심정보 시트에 함께 추가
     for row in schedule_rows:
-        label = row.get("항목", "")
-        val = row.get("일정", "")
-        summary_rows.append({"항목": label, "값": val})
+        summary_rows.append({"항목": row.get("항목", ""), "값": row.get("일정", "")})
 
     df_summary = pd.DataFrame(summary_rows)
 
+    # 🔹 타입별 / 금액표 DataFrame
+    df_supply = pd.DataFrame(supply_rows) if supply_rows else pd.DataFrame()
+    df_price = pd.DataFrame(price_rows) if price_rows else pd.DataFrame()
+
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        # ✔ 핵심정보 시트만 생성
         df_summary.to_excel(writer, index=False, sheet_name="핵심정보")
+        if not df_supply.empty:
+            df_supply.to_excel(writer, index=False, sheet_name="공급대상")
+        if not df_price.empty:
+            df_price.to_excel(writer, index=False, sheet_name="공급금액표")
 
     output.seek(0)
     return output
+
 
 
 
@@ -988,15 +995,19 @@ if uploaded:
     location = parse_location(text) or ""
 
     excel_bytes = make_excel_file(
-        complex_name=complex_name,
-        location=location,
-        core=core,
-        move_in=move_in,
-        final_siheng=final_siheng,
-        final_sigong=final_sigong,
-        final_agency=final_agency,
-        loan_cond=loan_cond,
-        schedule_rows=rows,
+    complex_name=complex_name,
+    location=location,
+    core=core,
+    move_in=move_in,
+    final_siheng=final_siheng,
+    final_sigong=final_sigong,
+    final_agency=final_agency,
+    loan_cond=loan_cond,
+    schedule_rows=rows,
+    supply_rows=supply_rows,   # 🔹 추가
+    price_rows=price_rows,     # 🔹 추가
+)
+
     )
 
     st.download_button(
