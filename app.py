@@ -658,9 +658,8 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
     - 주택형
     - 약식표기
     - 주거 전용면적
-    - 소계(주택공급면적 소계)
     - 총 공급 세대수
-    - 특별공급 세대수
+    - 특별공급 세대수(기관추천+다자녀+신혼부부+노부모부양+생애최초 합산)
     - 일반공급 세대수
     를 추출한다.
     """
@@ -700,21 +699,25 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["약식표기"] = c
                 elif "주거전용면적" in hdr or ("전용" in hdr and "면적" in hdr):
                     col_map["주거 전용면적"] = c
-                elif "소계" in hdr and ("주택공급" in hdr or "공급면적" in hdr):
-                    col_map["소계(주택공급면적)"] = c
                 elif ("총공급" in hdr and "세대수" in hdr) or "총공급세대수" in hdr:
                     col_map["총 공급 세대수"] = c
-                # 🔽 여기 부분만 이렇게 변경
-                elif "특별공급" in hdr and "계" in hdr:
-                    col_map["특별공급 세대수"] = c
                 elif "일반공급" in hdr and "세대수" in hdr:
                     col_map["일반공급 세대수"] = c
-
+                # 특별공급 세부 항목들
+                elif "기관추천" in hdr:
+                    col_map["기관추천"] = c
+                elif "다자녀" in hdr:
+                    col_map["다자녀가구"] = c
+                elif "신혼부부" in hdr:
+                    col_map["신혼부부"] = c
+                elif "노부모" in hdr:
+                    col_map["노부모부양"] = c
+                elif "생애최초" in hdr:
+                    col_map["생애최초"] = c
 
             if not col_map:
                 continue
 
-            # 데이터 행(헤더 이후)
             for r in range(1, df2.shape[0]):
                 row = df2.iloc[r]
                 row_txt = "".join(str(x) for x in row.tolist())
@@ -722,12 +725,31 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 if "합계" in row_txt:
                     continue
 
+                def get_val(key: str) -> str:
+                    idx = col_map.get(key)
+                    if idx is None or idx >= len(row):
+                        return ""
+                    return str(row.iloc[idx]).strip()
+
                 rec: Dict[str, str] = {}
-                for key, idx in col_map.items():
-                    if idx < len(row):
-                        rec[key] = str(row.iloc[idx]).strip()
-                    else:
-                        rec[key] = ""
+                rec["주택형"] = get_val("주택형")
+                rec["약식표기"] = get_val("약식표기")
+                rec["주거 전용면적"] = get_val("주거 전용면적")
+                rec["총 공급 세대수"] = get_val("총 공급 세대수")
+                rec["일반공급 세대수"] = get_val("일반공급 세대수")
+
+                # 🔹 특별공급 세대수 = 기관추천 + 다자녀 + 신혼부부 + 노부모부양 + 생애최초
+                special_total = 0
+                for k in ["기관추천", "다자녀가구", "신혼부부", "노부모부양", "생애최초"]:
+                    idx = col_map.get(k)
+                    if idx is None or idx >= len(row):
+                        continue
+                    raw = str(row.iloc[idx])
+                    num = re.sub(r"[^0-9]", "", raw)
+                    if num:
+                        special_total += int(num)
+
+                rec["특별공급 세대수"] = str(special_total) if special_total > 0 else ""
 
                 # 주택형/약식표기 둘 다 비어 있으면 스킵
                 if not (rec.get("주택형") or rec.get("약식표기")):
@@ -735,11 +757,11 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
 
                 results.append(rec)
 
-            # 공급대상 표는 보통 한 번만 나오니, 첫 표만 사용
             if results:
                 return results
 
     return results
+
 
 # ============================
 #  공급금액표 추출
@@ -766,7 +788,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             df = pd.DataFrame(table).fillna("")
             header_idx = None
 
-            # 🔽 헤더 탐지 조건 완전 교체
+            # 헤더 행 찾기
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
                 row_txt_ns = row_txt.replace(" ", "")
@@ -786,7 +808,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
             col_map: Dict[str, int] = {}
             for c in range(ncols):
-                # 🔽 헤더는 최대 3줄까지 합쳐서 본다 (조금 더 튼튼하게)
+                # 헤더는 최대 3줄까지 합쳐서 본다
                 hdr = "".join(df2.iloc[0:3, c].astype(str).tolist())
                 hdr = hdr.replace(" ", "").replace("\n", "")
 
@@ -800,9 +822,9 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["층구분"] = c
                 elif "해당세대수" in hdr or "해당세대" in hdr:
                     col_map["해당세대수"] = c
-                elif "공급금액" in hdr and "소계" in hdr:
+                # 🔹 '소계'만 있어도 공급금액 소계로 인식 (첫 번째 소계 컬럼만)
+                elif "소계" in hdr and "공급금액 소계" not in col_map:
                     col_map["공급금액 소계"] = c
-
 
             if not col_map:
                 continue
@@ -833,6 +855,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         current_abbr = val
                 rec["약식표기"] = current_abbr
 
+                # 나머지 컬럼들
                 for key, idx in col_map.items():
                     if key in ["주택형", "약식표기"]:
                         continue
