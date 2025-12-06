@@ -796,12 +796,19 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     를 추출한다.
     여러 페이지(50, 59A, 59B, 59C, 78, 84A, 84B, 84C ...)에 걸친
     모든 공급금액표를 한 번에 모은다.
+    유상옵션(발코니 확장, 시스템에어컨 등) 금액표는 제외한다.
     """
     results: List[Dict[str, str]] = []
 
     MONEY_KEYS = ["공급금액표", "공급금액", "대지비", "건축비", "계약금", "중도금", "잔금"]
+    # 🔹 옵션표를 거르기 위한 키워드
+    OPTION_KEYS = [
+        "유상옵션", "옵션금액", "옵션 금액", "선택옵션", "선택 옵션",
+        "선택품목", "선택 품목", "옵션내역", "발코니확장", "발코니 확장",
+        "시스템에어컨", "시스템 에어컨"
+    ]
 
-    last_col_map: Dict[str, int] | None = None  # ✅ 이전 페이지 헤더 정보 저장
+    last_col_map: Dict[str, int] | None = None  # 이전 페이지 공급금액표 헤더 정보
 
     for page in pdf.pages:
         tables = page.extract_tables() or []
@@ -811,13 +818,18 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
             df = pd.DataFrame(table).fillna("")
 
-            # 이 테이블이 공급금액표인지 1차 판별
             all_txt = "".join(df.astype(str).values.ravel()).replace(" ", "")
+
+            # 0) 아예 돈 관련 키워드가 없으면 공급금액표 아님
             if not any(k in all_txt for k in MONEY_KEYS):
                 continue
 
+            # 1) 옵션 관련 키워드가 있으면 → 유상옵션표로 보고 통째로 스킵
+            if any(k in all_txt for k in OPTION_KEYS):
+                continue
+
             # -----------------------
-            # 1) 헤더 행 위치 찾기
+            # 2) 헤더 행 위치 찾기
             # -----------------------
             header_idx = None
             for i, row in df.iterrows():
@@ -827,7 +839,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     break
 
             # -----------------------
-            # 2) 헤더가 있는 경우 → 새 col_map 구성
+            # 3) 헤더가 있는 경우 → 새 col_map 구성
             #    헤더가 없는 경우 → 이전 col_map 재사용
             # -----------------------
             if header_idx is not None:
@@ -855,10 +867,16 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     elif "소계" in hdr and "공급금액 소계" not in col_map:
                         col_map["공급금액 소계"] = c
 
-                if not col_map:
+                # 🔹 진짜 공급금액표인지 한 번 더 체크
+                required_basic = ["주택형", "약식표기", "동/호별", "공급금액 소계"]
+                if not all(k in col_map for k in required_basic) or (
+                    "층구분" not in col_map and "해당세대수" not in col_map
+                ):
+                    # 구조가 다르면 (옵션표 등) → 이 테이블은 건너뛰고,
+                    # 이전 last_col_map도 건드리지 않는다.
                     continue
 
-                last_col_map = col_map  # ✅ 다음 페이지에서 재사용할 수 있도록 저장
+                last_col_map = col_map  # 다음 페이지에서 재사용
             else:
                 # 헤더가 안 보이는데 이전 col_map도 없으면 해석 불가
                 if last_col_map is None:
@@ -867,7 +885,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 col_map = last_col_map
 
             # -----------------------
-            # 3) 데이터 행 파싱
+            # 4) 데이터 행 파싱
             # -----------------------
             current_type = ""
             current_abbr = ""
@@ -924,6 +942,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
