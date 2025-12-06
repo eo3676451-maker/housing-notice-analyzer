@@ -701,13 +701,15 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 elif "주거전용면적" in hdr or ("전용" in hdr and "면적" in hdr):
                     col_map["주거 전용면적"] = c
                 elif "소계" in hdr and ("주택공급" in hdr or "공급면적" in hdr):
-                    col_map["소계(주택공급면적)" ] = c
+                    col_map["소계(주택공급면적)"] = c
                 elif ("총공급" in hdr and "세대수" in hdr) or "총공급세대수" in hdr:
                     col_map["총 공급 세대수"] = c
-                elif "특별공급" in hdr and ("세대수" in hdr or "계" in hdr):
+                # 🔽 여기 부분만 이렇게 변경
+                elif "특별공급" in hdr and "계" in hdr:
                     col_map["특별공급 세대수"] = c
                 elif "일반공급" in hdr and "세대수" in hdr:
                     col_map["일반공급 세대수"] = c
+
 
             if not col_map:
                 continue
@@ -764,10 +766,15 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             df = pd.DataFrame(table).fillna("")
             header_idx = None
 
-            # '해당세대수' + '공급금액' 이 같이 있는 행을 헤더로 판단
+            # 🔽 헤더 탐지 조건 완전 교체
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
-                if "해당세대수" in row_txt and "공급금액" in row_txt:
+                row_txt_ns = row_txt.replace(" ", "")
+                if (
+                    "공급금액표" in row_txt_ns
+                    or ("공급금액" in row_txt_ns and "주택형" in row_txt_ns)
+                    or ("공급금액" in row_txt_ns and "해당세대수" in row_txt_ns)
+                ):
                     header_idx = i
                     break
 
@@ -779,7 +786,8 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
             col_map: Dict[str, int] = {}
             for c in range(ncols):
-                hdr = "".join(df2.iloc[0:2, c].astype(str).tolist())
+                # 🔽 헤더는 최대 3줄까지 합쳐서 본다 (조금 더 튼튼하게)
+                hdr = "".join(df2.iloc[0:3, c].astype(str).tolist())
                 hdr = hdr.replace(" ", "").replace("\n", "")
 
                 if "주택형" in hdr:
@@ -794,6 +802,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["해당세대수"] = c
                 elif "공급금액" in hdr and "소계" in hdr:
                     col_map["공급금액 소계"] = c
+
 
             if not col_map:
                 continue
