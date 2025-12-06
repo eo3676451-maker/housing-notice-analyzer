@@ -698,8 +698,8 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
 
             col_map: Dict[str, int] = {}
             for c in range(ncols):
-                # 첫 두 줄을 합쳐서 헤더 텍스트로 사용
-                hdr = "".join(df2.iloc[0:2, c].astype(str).tolist())
+                # 🔹 헤더는 넉넉히 4줄까지 합쳐서 본다 (소계가 3번째 줄에 있는 경우 대응)
+                hdr = "".join(df2.iloc[0:4, c].astype(str).tolist())
                 hdr = hdr.replace(" ", "").replace("\n", "")
 
                 if "주택형" in hdr:
@@ -708,13 +708,13 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["약식표기"] = c
                 elif "주거전용면적" in hdr or ("전용" in hdr and "면적" in hdr):
                     col_map["주거 전용면적"] = c
+                # ⬇ 주택공급면적 소계
+                elif "소계" in hdr and "세대" not in hdr:
+                    col_map["주택공급면적 소계"] = c
                 elif ("총공급" in hdr and "세대수" in hdr) or "총공급세대수" in hdr:
                     col_map["총 공급 세대수"] = c
                 elif "일반공급" in hdr and "세대수" in hdr:
                     col_map["일반공급 세대수"] = c
-                # ⬇ 여기서 주택공급면적 소계 잡기 (소계인데 세대가 아닌 컬럼)
-                elif "소계" in hdr and "세대" not in hdr:
-                    col_map["주택공급면적 소계"] = c
                 # 특별공급 세부 항목들
                 elif "기관추천" in hdr:
                     col_map["기관추천"] = c
@@ -733,6 +733,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
             for r in range(1, df2.shape[0]):
                 row = df2.iloc[r]
                 row_txt = "".join(str(x) for x in row.tolist())
+
                 # '합계' 행은 스킵
                 if "합계" in row_txt:
                     continue
@@ -764,10 +765,10 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
 
                 rec["특별공급 세대수"] = str(special_total) if special_total > 0 else ""
 
-                # ⬇ 중간에 다시 나온 헤더(주택형 / 약식표기) 같은 이상 행 제거
+                # 🔹 이상한 헤더 행(다시 '주택형', '약식표기'가 나오는 줄) 제거
                 if not (rec.get("주택형") or rec.get("약식표기")):
                     continue
-                if "주택형" in rec.get("주택형", "") and "약식" in rec.get("약식표기", ""):
+                if ("주택형" in rec.get("주택형", "")) or ("약식" in rec.get("약식표기", "")):
                     continue
 
                 results.append(rec)
@@ -777,6 +778,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 return results
 
     return results
+
 
 
 # ============================
@@ -796,6 +798,10 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     """
     results: List[Dict[str, str]] = []
 
+    # 이전에 찾은 헤더(col_map)를 재사용하기 위한 변수
+    global_col_map: Dict[str, int] | None = None
+    global_ncols: int | None = None
+
     for page in pdf.pages:
         tables = page.extract_tables() or []
         for table in tables:
@@ -803,9 +809,12 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 continue
 
             df = pd.DataFrame(table).fillna("")
-            header_idx = None
+            ncols = df.shape[1]
 
-            # 헤더 행 찾기
+            header_idx = None
+            local_col_map: Dict[str, int] = {}
+
+            # 1) 우선 이 테이블 안에서 헤더를 다시 찾아본다.
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
                 row_txt_ns = row_txt.replace(" ", "")
@@ -817,41 +826,57 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     header_idx = i
                     break
 
-            if header_idx is None:
-                continue
+            # 2) 이 페이지에서 헤더를 찾은 경우 → 여기서 col_map 구성
+            if header_idx is not None:
+                df2 = df.iloc[header_idx:].reset_index(drop=True)
 
-            df2 = df.iloc[header_idx:].reset_index(drop=True)
-            ncols = df2.shape[1]
+                for c in range(ncols):
+                    # 헤더는 최대 4줄까지 합쳐서 본다 (여러 줄로 나뉜 경우 대응)
+                    hdr = "".join(df2.iloc[0:4, c].astype(str).tolist())
+                    hdr = hdr.replace(" ", "").replace("\n", "")
 
-            col_map: Dict[str, int] = {}
-            for c in range(ncols):
-                # 헤더는 최대 3줄까지 합쳐서 본다
-                hdr = "".join(df2.iloc[0:3, c].astype(str).tolist())
-                hdr = hdr.replace(" ", "").replace("\n", "")
+                    if "주택형" in hdr:
+                        local_col_map["주택형"] = c
+                    elif "약식표기" in hdr or "약식표시" in hdr or "약식" in hdr:
+                        local_col_map["약식표기"] = c
+                    elif ("동" in hdr and "호" in hdr):
+                        local_col_map["동/호별"] = c
+                    elif "층구분" in hdr or ("층" in hdr and "구분" in hdr):
+                        local_col_map["층구분"] = c
+                    elif "해당세대수" in hdr or "해당세대" in hdr:
+                        local_col_map["해당세대수"] = c
+                    elif "소계" in hdr and ("공급금액" in hdr or "금액" in hdr):
+                        local_col_map["공급금액 소계"] = c
+                    elif "소계" in hdr and "공급금액 소계" not in local_col_map:
+                        local_col_map["공급금액 소계"] = c
 
-                if "주택형" in hdr:
-                    col_map["주택형"] = c
-                elif "약식표기" in hdr or "약식표시" in hdr or "약식" in hdr:
-                    col_map["약식표기"] = c
-                elif ("동" in hdr and "호" in hdr):
-                    col_map["동/호별"] = c
-                elif "층구분" in hdr or ("층" in hdr and "구분" in hdr):
-                    col_map["층구분"] = c
-                elif "해당세대수" in hdr or "해당세대" in hdr:
-                    col_map["해당세대수"] = c
-                # '소계' + '공급금액' 조합을 우선, 없으면 첫 번째 '소계'를 사용
-                elif "소계" in hdr and "공급금액" in hdr:
-                    col_map["공급금액 소계"] = c
-                elif "소계" in hdr and "공급금액" not in hdr and "공급금액 소계" not in col_map:
-                    col_map["공급금액 소계"] = c
+                # 헤더를 제대로 찾았으면 전역 col_map으로 저장
+                if local_col_map:
+                    global_col_map = local_col_map
+                    global_ncols = ncols
+                    data_start_row = 1  # 헤더 다음 줄부터
+                else:
+                    continue
 
-            if not col_map:
-                continue
+            # 3) 이 페이지에서는 헤더를 못 찾았지만,
+            #    이전 페이지에서 col_map을 이미 알고 있는 경우(테이블 연속 페이지)
+            else:
+                if not global_col_map or global_ncols is None:
+                    continue
+                # 컬럼 수가 맞거나 비슷하면 같은 테이블로 간주
+                if ncols != global_ncols:
+                    continue
+                df2 = df.reset_index(drop=True)
+                local_col_map = global_col_map
+                data_start_row = 0  # 이 페이지는 바로 데이터부터 시작
 
+            # ------------------------
+            # 여기부터 df2 + local_col_map 기준으로 행 파싱
+            # ------------------------
             current_type = ""
             current_abbr = ""
 
-            for r in range(1, df2.shape[0]):
+            for r in range(data_start_row, df2.shape[0]):
                 row = df2.iloc[r]
                 row_txt = "".join(str(x) for x in row.tolist())
                 if "합계" in row_txt:
@@ -860,14 +885,14 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 rec: Dict[str, str] = {}
 
                 # 주택형 / 약식표기 forward-fill
-                idx_type = col_map.get("주택형")
+                idx_type = local_col_map.get("주택형")
                 if idx_type is not None and idx_type < len(row):
                     val = str(row.iloc[idx_type]).strip()
                     if val:
                         current_type = val
                 rec["주택형"] = current_type
 
-                idx_abbr = col_map.get("약식표기")
+                idx_abbr = local_col_map.get("약식표기")
                 if idx_abbr is not None and idx_abbr < len(row):
                     val = str(row.iloc[idx_abbr]).strip()
                     if val:
@@ -875,7 +900,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 rec["약식표기"] = current_abbr
 
                 # 나머지 컬럼들
-                for key, idx in col_map.items():
+                for key, idx in local_col_map.items():
                     if key in ["주택형", "약식표기"]:
                         continue
                     if idx is not None and idx < len(row):
@@ -883,13 +908,19 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     else:
                         rec[key] = ""
 
-                # 공급금액 소계 / 해당세대수 둘 다 없으면 의미 없는 행이므로 스킵
+                # 공급금액 소계 / 해당세대수 둘 다 없으면 의미 없는 행 → 스킵
                 if not rec.get("공급금액 소계") and not rec.get("해당세대수"):
+                    continue
+
+                # 혹시 중간에 또 헤더가 끼어들어도 제거
+                if "동/호" in rec.get("동/호별", "") or "층구분" in rec.get("층구분", ""):
                     continue
 
                 results.append(rec)
 
     return results
+
+
 
 # ============================
 # Streamlit UI
