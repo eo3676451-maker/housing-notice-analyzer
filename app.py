@@ -517,7 +517,7 @@ def extract_loan_condition(text: str):
 # ============================
 #  엑셀 다운로드용 파일 생성
 # ============================
-def def make_excel_file(
+def make_excel_file(
     complex_name: str,
     location: str,
     core: dict,
@@ -1007,6 +1007,8 @@ if uploaded:
     supply_rows=supply_rows,   # 🔹 추가
     price_rows=price_rows,     # 🔹 추가
 )
+
+    )
 
     st.download_button(
         label="📥 엑셀 다운로드",
