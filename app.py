@@ -52,6 +52,7 @@ def parse_location(text: str):
                 return cleaned
     return None
 
+
 # ============================
 #  불필요 문단(유의사항·무주택기간 등) 제거
 # ============================
@@ -83,7 +84,6 @@ def filter_irrelevant_sections(text: str) -> str:
         filtered_lines.append(line)
 
     return "\n".join(filtered_lines)
-
 
 
 # ============================
@@ -118,12 +118,10 @@ def normalize_company_name(name: str) -> str:
     return name.strip()
 
 
-
-
 COMPANY_HINT_KEYWORDS = [
     "조합", "건설", "주식회사", "㈜", "(주)", "개발",
     "디앤씨", "디엔씨", "산업", "엔지니어링",
-    "홀딩스", "투자", "공사", "기업", "주택도시"
+    "홀딩스", "투자", "공사", "기업", "주택도시",
 ]
 
 
@@ -156,7 +154,6 @@ def looks_like_company(name: str) -> bool:
             return False
 
     return any(k in name for k in COMPANY_HINT_KEYWORDS)
-
 
 
 # ============================
@@ -345,7 +342,7 @@ def detect_role_from_header(text: str) -> List[str]:
 
 def extract_from_vertical_label_table(
     df: pd.DataFrame,
-    page_idx: int
+    page_idx: int,
 ) -> Dict[str, List[Tuple[str, int]]]:
     res = {
         "시행사": [],
@@ -374,7 +371,7 @@ def extract_from_vertical_label_table(
 
 def extract_from_horizontal_header_table(
     df: pd.DataFrame,
-    page_idx: int
+    page_idx: int,
 ) -> Dict[str, List[Tuple[str, int]]]:
     res = {
         "시행사": [],
@@ -514,6 +511,7 @@ def extract_loan_condition(text: str):
 
     return condition
 
+
 # ============================
 #  엑셀 다운로드용 파일 생성
 # ============================
@@ -527,8 +525,8 @@ def make_excel_file(
     final_agency: str | None,
     loan_cond: str | None,
     schedule_rows: list,
-    supply_rows: list,      # 🔹 추가
-    price_rows: list,       # 🔹 추가
+    supply_rows: list,
+    price_rows: list,
 ) -> BytesIO:
     # 요약 시트 + 청약일정
     summary_rows = [
@@ -547,7 +545,6 @@ def make_excel_file(
 
     df_summary = pd.DataFrame(summary_rows)
 
-    # 🔹 타입별 / 금액표 DataFrame
     df_supply = pd.DataFrame(supply_rows) if supply_rows else pd.DataFrame()
     df_price = pd.DataFrame(price_rows) if price_rows else pd.DataFrame()
 
@@ -561,9 +558,6 @@ def make_excel_file(
 
     output.seek(0)
     return output
-
-
-
 
 
 # ============================
@@ -583,22 +577,17 @@ def extract_schedule_from_table(pdf):
     header_map = {
         "입주자모집공고": "입주자모집공고일",
         "입주자 모집공고": "입주자모집공고일",
-
         "특별공급접수": "특별공급 접수일",
         "특별공급 신청": "특별공급 접수일",
         "특별공급 접수": "특별공급 접수일",
-
         "1순위 접수": "일반공급 1순위 접수일",
         "1순위": "일반공급 1순위 접수일",
         "일반공급 1순위 접수": "일반공급 1순위 접수일",
-
         "2순위 접수": "일반공급 2순위 접수일",
         "2순위": "일반공급 2순위 접수일",
         "일반공급 2순위 접수": "일반공급 2순위 접수일",
-
         "당첨자발표일": "당첨자발표일",
         "당첨자 발표": "당첨자발표일",
-
         "서류접수": "서류접수",
         "정당계약": "계약체결",
         "계약체결": "계약체결",
@@ -655,6 +644,7 @@ def extract_schedule_from_table(pdf):
                                 break
 
     return schedule
+
 
 # ============================
 #  공급대상(타입별) 추출
@@ -745,7 +735,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 rec["총 공급 세대수"] = get_val("총 공급 세대수")
                 rec["일반공급 세대수"] = get_val("일반공급 세대수")
 
-                # 🔹 특별공급 세대수 = 기관추천 + 다자녀 + 신혼부부 + 노부모부양 + 생애최초
+                # 특별공급 세대수 = 기관추천 + 다자녀 + 신혼부부 + 노부모부양 + 생애최초
                 special_total = 0
                 for k in ["기관추천", "다자녀가구", "신혼부부", "노부모부양", "생애최초"]:
                     idx = col_map.get(k)
@@ -829,7 +819,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["층구분"] = c
                 elif "해당세대수" in hdr or "해당세대" in hdr:
                     col_map["해당세대수"] = c
-                # 🔹 '소계'만 있어도 공급금액 소계로 인식 (첫 번째 소계 컬럼만)
+                # '소계'만 있어도 공급금액 소계로 인식 (첫 번째 소계 컬럼만)
                 elif "소계" in hdr and "공급금액 소계" not in col_map:
                     col_map["공급금액 소계"] = c
 
@@ -904,8 +894,7 @@ if uploaded:
     # 1-1) 불필요 문단 제거 (4~7, 11항 유의사항 등)
     text = filter_irrelevant_sections(text)
 
-
-     # 2) 표 기반 정보 (청약일정 + 회사정보 + 공급대상 + 공급금액표)
+    # 2) 표 기반 정보 (청약일정 + 회사정보 + 공급대상 + 공급금액표)
     uploaded.seek(0)
     with pdfplumber.open(uploaded) as pdf:
         schedule = extract_schedule_from_table(pdf)
@@ -927,7 +916,6 @@ if uploaded:
     st.markdown(f"**📍 공급 위치:** {parse_location(text) or '정보 없음'}")
 
     st.subheader("📌 핵심 정보 요약")
-
     st.write(f"- **공급규모:** {core.get('공급규모') or '정보 없음'}")
     st.write(f"- **입주예정일:** {move_in or '정보 없음'}")
 
@@ -987,27 +975,24 @@ if uploaded:
     else:
         st.info("공급금액표를 찾지 못했습니다.")
 
-
     # ---------------------------
     # 엑셀 다운로드 버튼
     # ---------------------------
     complex_name = parse_complex_name(text) or ""
     location = parse_location(text) or ""
 
-    excel_bytes = make_excel_file(
-    complex_name=complex_name,
-    location=location,
-    core=core,
-    move_in=move_in,
-    final_siheng=final_siheng,
-    final_sigong=final_sigong,
-    final_agency=final_agency,
-    loan_cond=loan_cond,
-    schedule_rows=rows,
-    supply_rows=supply_rows,   # 🔹 추가
-    price_rows=price_rows,     # 🔹 추가
-)
-
+        excel_bytes = make_excel_file(
+        complex_name=complex_name,
+        location=location,
+        core=core,
+        move_in=move_in,
+        final_siheng=final_siheng,
+        final_sigong=final_sigong,
+        final_agency=final_agency,
+        loan_cond=loan_cond,
+        schedule_rows=rows,
+        supply_rows=supply_rows,
+        price_rows=price_rows,
     )
 
     st.download_button(
@@ -1017,6 +1002,6 @@ if uploaded:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-
 else:
     st.info("PDF 파일을 업로드해주세요.")
+
