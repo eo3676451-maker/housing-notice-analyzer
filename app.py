@@ -540,23 +540,22 @@ def make_excel_file(
         {"항목": "중도금 대출 조건", "값": loan_cond or ""},
     ]
 
-    # 🔹 청약 일정도 핵심정보 시트에 같이 넣기
+    # 🔹 청약 일정도 핵심정보 시트에 함께 추가
     for row in schedule_rows:
         label = row.get("항목", "")
         val = row.get("일정", "")
         summary_rows.append({"항목": label, "값": val})
 
     df_summary = pd.DataFrame(summary_rows)
-    df_schedule = pd.DataFrame(schedule_rows)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        # 시트1: 핵심정보 + 일정 요약
+        # ✔ 핵심정보 시트만 생성
         df_summary.to_excel(writer, index=False, sheet_name="핵심정보")
-        # 시트2: 청약일정 상세
-        df_schedule.to_excel(writer, index=False, sheet_name="청약일정")
+
     output.seek(0)
     return output
+
 
 
 
