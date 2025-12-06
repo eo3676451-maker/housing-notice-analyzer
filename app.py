@@ -53,7 +53,7 @@ def parse_location(text: str):
 
 
 # ============================
-#  회사명 정규화 유틸
+#  회사명 정규화 + 판별 유틸
 # ============================
 def normalize_company_name(name: str) -> str:
     if not name:
@@ -75,6 +75,33 @@ def normalize_company_name(name: str) -> str:
 
     return name.strip()
 
+
+COMPANY_HINT_KEYWORDS = [
+    "조합", "건설", "주식회사", "㈜", "(주)", "개발",
+    "디앤씨", "디엔씨", "산업", "주택", "엔지니어링",
+    "홀딩스", "투자", "공사", "기업", "주택도시"
+]
+
+
+def looks_like_company(name: str) -> bool:
+    """
+    주소(부산광역시~, 서울특별시~ 등)처럼 보이는 문자열을 걸러내고
+    '조합', '건설', '주식회사' 등 회사 관련 키워드가 포함된
+    30자 이하의 문자열만 회사명으로 인정
+    """
+    if not name:
+        return False
+    name = name.strip()
+    if len(name) > 30:
+        return False
+
+    # 주소로 보이는 패턴은 기본적으로 제외
+    if any(word in name for word in ["광역시", "특별시", "시 ", "군 ", "구 ", "동 ", "로 ", "길 "]):
+        # 다만 회사 키워드가 같이 있으면 허용
+        if not any(k in name for k in COMPANY_HINT_KEYWORDS):
+            return False
+
+    return any(k in name for k in COMPANY_HINT_KEYWORDS)
 
 
 # ============================
@@ -106,9 +133,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
         for pat in pats:
             for m in re.finditer(pat, norm):
                 name = normalize_company_name(m.group(1))
-                if name and len(name) <= 30 and name not in result[role]:
-                  result[role].append(name)
-
+                if looks_like_company(name) and name not in result[role]:
+                    result[role].append(name)
 
     simple_patterns = {
         "시행사": [
@@ -126,8 +152,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
         for pat in pats:
             for m in re.finditer(pat, norm):
                 name = normalize_company_name(m.group(1))
-                if name and len(name) <= 30 and name not in result[role]:
-                  result[role].append(name)
+                if looks_like_company(name) and name not in result[role]:
+                    result[role].append(name)
 
     combo_pattern = r"(시행|시공|분양대행)\s*[: ]\s*([^/]+)"
     for m in re.finditer(combo_pattern, norm):
@@ -139,9 +165,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
             role = "시공사"
         else:
             role = "분양대행사"
-        if name and len(name) <= 30 and name not in result[role]:
-         result[role].append(name)
-
+        if looks_like_company(name) and name not in result[role]:
+            result[role].append(name)
 
     return result
 
@@ -181,9 +206,8 @@ def extract_core_info(text: str):
             cleaned = cleaned.replace(":", "")
             cleaned = cleaned.strip()
 
-            # 회사명 형태로 정규화 + 너무 길면 버리기(문단 방지)
             cleaned = normalize_company_name(cleaned)
-            if cleaned and len(cleaned) <= 30:
+            if looks_like_company(cleaned):
                 info["시행사"] = cleaned
             continue
 
@@ -196,12 +220,11 @@ def extract_core_info(text: str):
             cleaned = cleaned.strip()
 
             cleaned = normalize_company_name(cleaned)
-            if cleaned and len(cleaned) <= 30:
+            if looks_like_company(cleaned):
                 info["시공사"] = cleaned
             continue
 
     return info
-
 
 
 # ============================
@@ -209,10 +232,10 @@ def extract_core_info(text: str):
 # ============================
 def extract_move_in_date(text: str) -> str | None:
     """
-    '입주 시기', '입주시기', '입주 예정' 이 들어간 줄에서
-    'YYYY년 MM월' 또는 'YYYY.MM' 패턴을 찾아 반환
+    '입주 시기/입주시기/입주예정(일)' 이 들어간 여러 줄 중에서
+    날짜(YYYY년 MM월 또는 YYYY.MM)가 있는 줄을 우선적으로 골라냄
     """
-    target_line = None
+    candidate_lines: List[str] = []
 
     for line in text.splitlines():
         s = line.strip()
@@ -221,33 +244,29 @@ def extract_move_in_date(text: str) -> str | None:
 
         no_space = s.replace(" ", "")
 
-        # '입주 시기', '입주시기', '입주 예정' 이 포함된 줄만 후보로 사용
-        if "입주시기" in no_space or "입주시기" in no_space or "입주예정" in no_space:
-            target_line = s
-            break
+        if any(k in no_space for k in ["입주시기", "입주시기", "입주예정", "입주예정일"]):
+            candidate_lines.append(s)
 
-    if not target_line:
-        return None
+    # 1) 날짜가 들어있는 줄을 우선 탐색
+    for s in candidate_lines:
+        m = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월", s)
+        if m:
+            year = int(m.group(1))
+            month = int(m.group(2))
+            return f"{year}년 {month}월"
 
-    # 1) 2029년 2월, 2029년 02월
-    m = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월", target_line)
-    if m:
-        year = int(m.group(1))
-        month = int(m.group(2))
-        return f"{year}년 {month}월"
+        m2 = re.search(r"(\d{4})\.(\d{1,2})", s)
+        if m2:
+            year = int(m2.group(1))
+            month = int(m2.group(2))
+            return f"{year}년 {month}월"
 
-    # 2) 2029.2, 2029.02
-    m2 = re.search(r"(\d{4})\.(\d{1,2})", target_line)
-    if m2:
-        year = int(m2.group(1))
-        month = int(m2.group(2))
-        return f"{year}년 {month}월"
+    # 2) 그래도 못 찾으면 첫 번째 후보 줄을 짧게만 보여줌
+    if candidate_lines:
+        first = candidate_lines[0]
+        return first[:40] + "..." if len(first) > 40 else first
 
-    # 3) 그래도 못 찾으면 줄 자체를 짧게 잘라서 반환 (너무 길면 ... 처리)
-    if len(target_line) > 40:
-        return target_line[:40] + "..."
-    return target_line
-
+    return None
 
 
 # ============================
@@ -292,8 +311,7 @@ def extract_from_vertical_label_table(
         candidates = [normalize_company_name(v) for v in row if str(v).strip()]
         for role in roles:
             for c in candidates:
-        # 회사명 정규화 + 너무 긴 문자열(문단) 제거
-                 if c and len(c) <= 30:
+                if looks_like_company(c):
                     res[role].append((c, page_idx))
 
     return res
@@ -326,8 +344,8 @@ def extract_from_horizontal_header_table(
             if str(v).strip()
         ]
         for role in roles:
-            for c in candidates: # 회사명 정규화 + 너무 긴 문자열(문단) 제거
-                if c and len(c) <= 30:
+            for c in candidates:
+                if looks_like_company(c):
                     res[role].append((c, page_idx))
 
     return res
@@ -368,6 +386,7 @@ def choose_final_company(
 ) -> Dict[str, str]:
     scores: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
+    # 표 기반: 기본 3점 + 마지막 페이지면 +2점
     for role, vals in table_candidates.items():
         for name, page_idx in vals:
             if not name:
@@ -378,6 +397,7 @@ def choose_final_company(
                 bonus += 2
             scores[role][name] += base + bonus
 
+    # 텍스트 기반: 기본 2점
     for role, names in text_candidates.items():
         for name in names:
             if not name:
@@ -571,8 +591,6 @@ if uploaded:
     st.subheader("📌 핵심 정보 요약")
 
     st.write(f"- **공급규모:** {core.get('공급규모') or '정보 없음'}")
-
-    # NEW: 입주예정일
     st.write(f"- **입주예정일:** {move_in or '정보 없음'}")
 
     final_siheng = table_company.get("시행사") or core.get("시행사")
