@@ -528,7 +528,7 @@ def make_excel_file(
     loan_cond: str | None,
     schedule_rows: list,
 ) -> BytesIO:
-    # 요약 시트
+    # 요약 시트 기본 정보
     summary_rows = [
         {"항목": "단지명", "값": complex_name},
         {"항목": "공급위치", "값": location},
@@ -539,15 +539,25 @@ def make_excel_file(
         {"항목": "분양대행사", "값": final_agency or ""},
         {"항목": "중도금 대출 조건", "값": loan_cond or ""},
     ]
+
+    # 🔹 청약 일정도 핵심정보 시트에 같이 넣기
+    for row in schedule_rows:
+        label = row.get("항목", "")
+        val = row.get("일정", "")
+        summary_rows.append({"항목": label, "값": val})
+
     df_summary = pd.DataFrame(summary_rows)
     df_schedule = pd.DataFrame(schedule_rows)
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        # 시트1: 핵심정보 + 일정 요약
         df_summary.to_excel(writer, index=False, sheet_name="핵심정보")
+        # 시트2: 청약일정 상세
         df_schedule.to_excel(writer, index=False, sheet_name="청약일정")
     output.seek(0)
     return output
+
 
 
 # ============================
