@@ -292,8 +292,10 @@ def extract_from_vertical_label_table(
         candidates = [normalize_company_name(v) for v in row if str(v).strip()]
         for role in roles:
             for c in candidates:
-                if c:
+        # 회사명 정규화 + 너무 긴 문자열(문단) 제거
+                 if c and len(c) <= 30:
                     res[role].append((c, page_idx))
+
     return res
 
 
@@ -324,9 +326,10 @@ def extract_from_horizontal_header_table(
             if str(v).strip()
         ]
         for role in roles:
-            for c in candidates:
-                if c:
+            for c in candidates: # 회사명 정규화 + 너무 긴 문자열(문단) 제거
+                if c and len(c) <= 30:
                     res[role].append((c, page_idx))
+
     return res
 
 
