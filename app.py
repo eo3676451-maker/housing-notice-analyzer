@@ -528,60 +528,46 @@ def make_excel_file(
     supply_rows: list,
     price_rows: list,
 ) -> BytesIO:
-
-    # ----------------------
-    # 1) 핵심 정보 구성
-    # ----------------------
+    # 요약 + 청약일정
     summary_rows = [
-        ["항목", "값"],
-        ["단지명", complex_name],
-        ["공급위치", location],
-        ["공급규모", core.get("공급규모") or ""],
-        ["입주예정일", move_in or ""],
-        ["시행사", final_siheng or ""],
-        ["시공사", final_sigong or ""],
-        ["분양대행사", final_agency or ""],
-        ["중도금 대출 조건", loan_cond or ""],
+        {"항목": "단지명", "값": complex_name},
+        {"항목": "공급위치", "값": location},
+        {"항목": "공급규모", "값": core.get("공급규모") or ""},
+        {"항목": "입주예정일", "값": move_in or ""},
+        {"항목": "시행사", "값": final_siheng or ""},
+        {"항목": "시공사", "값": final_sigong or ""},
+        {"항목": "분양대행사", "값": final_agency or ""},
+        {"항목": "중도금 대출 조건", "값": loan_cond or ""},
     ]
 
-    # ----------------------
-    # 2) 청약 일정 테이블 구성
-    # ----------------------
-    schedule_table = [["항목", "일정"]]
     for row in schedule_rows:
-        schedule_table.append([row["항목"], row["일정"]])
+        summary_rows.append({"항목": row.get("항목", ""), "값": row.get("일정", "")})
 
-    # ----------------------
-    # 3) DataFrame 변환
-    # ----------------------
-    df_summary = pd.DataFrame(summary_rows[1:], columns=summary_rows[0])
-    df_schedule = pd.DataFrame(schedule_table[1:], columns=schedule_table[0])
+    df_summary = pd.DataFrame(summary_rows)
     df_supply = pd.DataFrame(supply_rows) if supply_rows else pd.DataFrame()
     df_price = pd.DataFrame(price_rows) if price_rows else pd.DataFrame()
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        sheet = "모집공고_전체요약"
+        sheet_name = "모집공고"
 
-        # ------------- 핵심정보 -------------
-        df_summary.to_excel(writer, sheet_name=sheet, index=False, startrow=0)
+        # 1) 핵심정보 + 청약일정
+        df_summary.to_excel(writer, index=False, sheet_name=sheet_name, startrow=0)
 
-        # ------------- 청약일정 -------------
         start_row = len(df_summary) + 2
-        df_schedule.to_excel(writer, sheet_name=sheet, index=False, startrow=start_row)
 
-        # ------------- 공급대상 -------------
-        start_row += len(df_schedule) + 2
+        # 2) 공급대상
         if not df_supply.empty:
-            df_supply.to_excel(writer, sheet_name=sheet, index=False, startrow=start_row)
+            df_supply.to_excel(writer, index=False, sheet_name=sheet_name, startrow=start_row)
+            start_row += len(df_supply) + 2
 
-        # ------------- 공급금액표 -------------
-        start_row += (len(df_supply) if not df_supply.empty else 0) + 2
+        # 3) 공급금액표
         if not df_price.empty:
-            df_price.to_excel(writer, sheet_name=sheet, index=False, startrow=start_row)
+            df_price.to_excel(writer, index=False, sheet_name=sheet_name, startrow=start_row)
 
     output.seek(0)
     return output
+
 
 
 
@@ -685,7 +671,6 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
     - 특별공급 세대수(기관추천+다자녀+신혼부부+노부모부양+생애최초 합산)
     - 일반공급 세대수
     를 추출한다.
-    여러 페이지/여러 표를 전부 누적.
     """
     results: List[Dict[str, str]] = []
 
@@ -723,13 +708,13 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["약식표기"] = c
                 elif "주거전용면적" in hdr or ("전용" in hdr and "면적" in hdr):
                     col_map["주거 전용면적"] = c
-                # 🔹 주택공급면적 소계
-                elif "소계" in hdr and ("주택공급" in hdr or "공급면적" in hdr or "주택공급면적" in hdr):
-                    col_map["주택공급면적 소계"] = c
                 elif ("총공급" in hdr and "세대수" in hdr) or "총공급세대수" in hdr:
                     col_map["총 공급 세대수"] = c
                 elif "일반공급" in hdr and "세대수" in hdr:
                     col_map["일반공급 세대수"] = c
+                # ⬇ 여기서 주택공급면적 소계 잡기 (소계인데 세대가 아닌 컬럼)
+                elif "소계" in hdr and "세대" not in hdr:
+                    col_map["주택공급면적 소계"] = c
                 # 특별공급 세부 항목들
                 elif "기관추천" in hdr:
                     col_map["기관추천"] = c
@@ -779,15 +764,19 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
 
                 rec["특별공급 세대수"] = str(special_total) if special_total > 0 else ""
 
-                # 주택형/약식표기 둘 다 비어 있으면 스킵
+                # ⬇ 중간에 다시 나온 헤더(주택형 / 약식표기) 같은 이상 행 제거
                 if not (rec.get("주택형") or rec.get("약식표기")):
+                    continue
+                if "주택형" in rec.get("주택형", "") and "약식" in rec.get("약식표기", ""):
                     continue
 
                 results.append(rec)
 
+            # 공급대상 표는 보통 한 번만 나오니, 첫 표만 사용
+            if results:
+                return results
+
     return results
-
-
 
 
 # ============================
@@ -803,7 +792,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     - 해당세대수
     - 공급금액 소계
     를 추출한다.
-    여러 페이지·여러 표에 걸쳐 있어도 전부 누적.
+    여러 페이지에 걸쳐 있으면 모든 페이지에서 이어서 수집한다.
     """
     results: List[Dict[str, str]] = []
 
@@ -816,7 +805,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             df = pd.DataFrame(table).fillna("")
             header_idx = None
 
-            # 1차: '공급금액표' 또는 '공급금액' 관련 문구가 있는 행
+            # 헤더 행 찾기
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
                 row_txt_ns = row_txt.replace(" ", "")
@@ -827,20 +816,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 ):
                     header_idx = i
                     break
-
-            # 2차: 위가 없으면, '주택형+동/호+층구분(or 층)+해당세대수'가 같이 있는 행을 헤더로 본다
-            if header_idx is None:
-                for i, row in df.iterrows():
-                    row_txt = "".join(str(x) for x in row.tolist())
-                    row_txt_ns = row_txt.replace(" ", "")
-                    if (
-                        "주택형" in row_txt_ns
-                        and ("동" in row_txt_ns and "호" in row_txt_ns)
-                        and ("층구분" in row_txt_ns or "층" in row_txt_ns)
-                        and ("해당세대수" in row_txt_ns or "해당세대" in row_txt_ns)
-                    ):
-                        header_idx = i
-                        break
 
             if header_idx is None:
                 continue
@@ -864,8 +839,10 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["층구분"] = c
                 elif "해당세대수" in hdr or "해당세대" in hdr:
                     col_map["해당세대수"] = c
-                # 🔹 '소계'만 있어도 공급금액 소계로 인식 (첫 번째 소계 컬럼만)
-                elif "소계" in hdr and "공급금액 소계" not in col_map:
+                # '소계' + '공급금액' 조합을 우선, 없으면 첫 번째 '소계'를 사용
+                elif "소계" in hdr and "공급금액" in hdr:
+                    col_map["공급금액 소계"] = c
+                elif "소계" in hdr and "공급금액" not in hdr and "공급금액 소계" not in col_map:
                     col_map["공급금액 소계"] = c
 
             if not col_map:
@@ -913,9 +890,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
-
-
-
 
 # ============================
 # Streamlit UI
