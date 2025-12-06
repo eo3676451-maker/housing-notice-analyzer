@@ -106,7 +106,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
         for pat in pats:
             for m in re.finditer(pat, norm):
                 name = normalize_company_name(m.group(1))
-                if name and len(name) <= 30 and name not in result[role]:result[role].append(name)
+                if name and len(name) <= 30 and name not in result[role]:
+                  result[role].append(name)
 
 
     simple_patterns = {
@@ -125,7 +126,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
         for pat in pats:
             for m in re.finditer(pat, norm):
                 name = normalize_company_name(m.group(1))
-                if name and len(name) <= 30 and name not in result[role]:result[role].append(name)
+                if name and len(name) <= 30 and name not in result[role]:
+                  result[role].append(name)
 
     combo_pattern = r"(시행|시공|분양대행)\s*[: ]\s*([^/]+)"
     for m in re.finditer(combo_pattern, norm):
@@ -137,7 +139,8 @@ def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
             role = "시공사"
         else:
             role = "분양대행사"
-        if name and len(name) <= 30 and name not in result[role]:result[role].append(name)
+        if name and len(name) <= 30 and name not in result[role]:
+         result[role].append(name)
 
 
     return result
