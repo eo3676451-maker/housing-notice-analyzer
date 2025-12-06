@@ -1,4 +1,0 @@
-streamlit==1.52.0
-pdfplumber
-pandas
-xlsxwriter
