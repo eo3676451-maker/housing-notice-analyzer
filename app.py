@@ -528,36 +528,61 @@ def make_excel_file(
     supply_rows: list,
     price_rows: list,
 ) -> BytesIO:
-    # 요약 시트 + 청약일정
+
+    # ----------------------
+    # 1) 핵심 정보 구성
+    # ----------------------
     summary_rows = [
-        {"항목": "단지명", "값": complex_name},
-        {"항목": "공급위치", "값": location},
-        {"항목": "공급규모", "값": core.get("공급규모") or ""},
-        {"항목": "입주예정일", "값": move_in or ""},
-        {"항목": "시행사", "값": final_siheng or ""},
-        {"항목": "시공사", "값": final_sigong or ""},
-        {"항목": "분양대행사", "값": final_agency or ""},
-        {"항목": "중도금 대출 조건", "값": loan_cond or ""},
+        ["항목", "값"],
+        ["단지명", complex_name],
+        ["공급위치", location],
+        ["공급규모", core.get("공급규모") or ""],
+        ["입주예정일", move_in or ""],
+        ["시행사", final_siheng or ""],
+        ["시공사", final_sigong or ""],
+        ["분양대행사", final_agency or ""],
+        ["중도금 대출 조건", loan_cond or ""],
     ]
 
+    # ----------------------
+    # 2) 청약 일정 테이블 구성
+    # ----------------------
+    schedule_table = [["항목", "일정"]]
     for row in schedule_rows:
-        summary_rows.append({"항목": row.get("항목", ""), "값": row.get("일정", "")})
+        schedule_table.append([row["항목"], row["일정"]])
 
-    df_summary = pd.DataFrame(summary_rows)
-
+    # ----------------------
+    # 3) DataFrame 변환
+    # ----------------------
+    df_summary = pd.DataFrame(summary_rows[1:], columns=summary_rows[0])
+    df_schedule = pd.DataFrame(schedule_table[1:], columns=schedule_table[0])
     df_supply = pd.DataFrame(supply_rows) if supply_rows else pd.DataFrame()
     df_price = pd.DataFrame(price_rows) if price_rows else pd.DataFrame()
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        df_summary.to_excel(writer, index=False, sheet_name="핵심정보")
+        sheet = "모집공고_전체요약"
+
+        # ------------- 핵심정보 -------------
+        df_summary.to_excel(writer, sheet_name=sheet, index=False, startrow=0)
+
+        # ------------- 청약일정 -------------
+        start_row = len(df_summary) + 2
+        df_schedule.to_excel(writer, sheet_name=sheet, index=False, startrow=start_row)
+
+        # ------------- 공급대상 -------------
+        start_row += len(df_schedule) + 2
         if not df_supply.empty:
-            df_supply.to_excel(writer, index=False, sheet_name="공급대상")
+            df_supply.to_excel(writer, sheet_name=sheet, index=False, startrow=start_row)
+
+        # ------------- 공급금액표 -------------
+        start_row += (len(df_supply) if not df_supply.empty else 0) + 2
         if not df_price.empty:
-            df_price.to_excel(writer, index=False, sheet_name="공급금액표")
+            df_price.to_excel(writer, sheet_name=sheet, index=False, startrow=start_row)
 
     output.seek(0)
     return output
+
 
 
 # ============================
