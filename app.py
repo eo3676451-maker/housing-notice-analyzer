@@ -3,6 +3,8 @@ import pdfplumber
 import re
 from datetime import datetime
 import pandas as pd
+from typing import Dict, List, Tuple
+from collections import defaultdict
 
 # ============================
 #  공통 유틸
@@ -51,19 +53,98 @@ def parse_location(text: str):
 
 
 # ============================
+#  회사명 정규화 유틸
+# ============================
+def normalize_company_name(name: str) -> str:
+    if not name:
+        return ""
+    name = str(name)
+    name = re.sub(r"\s+", " ", name).strip()
+    name = re.sub(r"(\)|주식회사|㈜|\(주\))[^가-힣A-Za-z0-9]*$", r"\1", name)
+    name = name.strip(":-·,[]() ")
+    return name.strip()
+
+
+# ============================
+#  텍스트 기반 시행/시공/분양 추출
+# ============================
+def extract_companies_from_text(text: str) -> Dict[str, List[str]]:
+    result = {
+        "시행사": [],
+        "시공사": [],
+        "분양대행사": [],
+    }
+
+    norm = text.replace("：", ":")
+    norm = re.sub(r"\s+", " ", norm)
+
+    patterns = {
+        "시행사": [
+            r"(?:사업주체|시행자|시행사)\s*[:]\s*([^\n:]+)",
+        ],
+        "시공사": [
+            r"(?:시공자|시공사|시공)\s*[:]\s*([^\n:]+)",
+        ],
+        "분양대행사": [
+            r"(?:분양대행사|분양대행|분양대리점)\s*[:]\s*([^\n:]+)",
+        ],
+    }
+
+    for role, pats in patterns.items():
+        for pat in pats:
+            for m in re.finditer(pat, norm):
+                name = normalize_company_name(m.group(1))
+                if name and name not in result[role]:
+                    result[role].append(name)
+
+    simple_patterns = {
+        "시행사": [
+            r"(?:사업주체|시행자|시행사)\s+([^\n:]+)",
+        ],
+        "시공사": [
+            r"(?:시공자|시공사|시공)\s+([^\n:]+)",
+        ],
+        "분양대행사": [
+            r"(?:분양대행사|분양대행|분양대리점)\s+([^\n:]+)",
+        ],
+    }
+
+    for role, pats in simple_patterns.items():
+        for pat in pats:
+            for m in re.finditer(pat, norm):
+                name = normalize_company_name(m.group(1))
+                if name and name not in result[role]:
+                    result[role].append(name)
+
+    combo_pattern = r"(시행|시공|분양대행)\s*[: ]\s*([^/]+)"
+    for m in re.finditer(combo_pattern, norm):
+        key = m.group(1)
+        name = normalize_company_name(m.group(2))
+        if "시행" in key:
+            role = "시행사"
+        elif "시공" in key:
+            role = "시공사"
+        else:
+            role = "분양대행사"
+        if name and name not in result[role]:
+            result[role].append(name)
+
+    return result
+
+
+# ============================
 #  핵심 정보(공급규모 + 텍스트 백업용 시행/시공) 추출
 # ============================
 def extract_core_info(text: str):
     info = {
         "공급규모": None,
-        "시행사": None,   # 텍스트에서 찾는 백업용
-        "시공사": None,   # 텍스트에서 찾는 백업용
+        "시행사": None,
+        "시공사": None,
     }
 
     for line in text.splitlines():
         s = line.strip()
 
-        # 공급규모
         if not info["공급규모"] and ("공급규모" in s or "총 공급세대수" in s):
             cleaned = s
             cleaned = cleaned.replace("■", "")
@@ -74,7 +155,6 @@ def extract_core_info(text: str):
             cleaned = cleaned.strip()
             info["공급규모"] = cleaned
 
-        # 시행사(텍스트에 노출되는 경우)
         if not info["시행사"] and ("시행자" in s or "시행사" in s):
             cleaned = s
             cleaned = cleaned.replace("■", "").replace("●", "")
@@ -83,7 +163,6 @@ def extract_core_info(text: str):
             cleaned = cleaned.strip()
             info["시행사"] = cleaned
 
-        # 시공사(텍스트에 노출되는 경우)
         if not info["시공사"] and ("시공자" in s or "시공사" in s):
             cleaned = s
             cleaned = cleaned.replace("■", "").replace("●", "")
@@ -96,88 +175,200 @@ def extract_core_info(text: str):
 
 
 # ============================
-#  표에서 사업주체 / 시공사 / 분양대행사 추출 (개선 버전)
+#  입주 예정일 추출
 # ============================
-def extract_company_from_table(pdf):
+def extract_move_in_date(text: str) -> str | None:
     """
-    '사업주체 및 시공회사' 표 구조를 이용해서
-    - 헤더 행에서 각 컬럼 인덱스를 찾고
-    - 그 아래 '회사명' 행(또는 첫 데이터 행)에서 실제 회사명을 읽어온다.
+    '입주 시기', '입주시기', '입주 예정' 등이 들어간 줄에서
+    'YYYY년 MM월' 또는 'YYYY.MM' 패턴을 찾아 반환
     """
+    for line in text.splitlines():
+        s = line.strip()
+        if ("입주" in s and "시기" in s) or ("입주" in s and "예정" in s):
+            # 2029년 2월, 2029년 02월
+            m = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월", s)
+            if m:
+                year = int(m.group(1))
+                month = int(m.group(2))
+                return f"{year}년 {month}월"
+
+            # 2029.2 또는 2029.02
+            m2 = re.search(r"(\d{4})\.(\d{1,2})", s)
+            if m2:
+                year = int(m2.group(1))
+                month = int(m2.group(2))
+                return f"{year}년 {month}월"
+
+            # 위 패턴이 없으면 해당 줄 전체 반환
+            return s
+
+    return None
+
+
+# ============================
+#  표 기반 회사정보 추출 유틸
+# ============================
+ROLE_KEYWORDS = {
+    "시행사": ["사업주체", "시행자", "시행사", "사업시행자"],
+    "시공사": ["시공사", "시공자", "시공"],
+    "분양대행사": ["분양대행사", "분양대행", "분양대리점", "위탁사"],
+}
+
+
+def detect_role_from_header(text: str) -> List[str]:
+    roles = []
+    t = text.replace(" ", "")
+    for role, keywords in ROLE_KEYWORDS.items():
+        if any(k in t for k in keywords):
+            roles.append(role)
+    return roles
+
+
+def extract_from_vertical_label_table(
+    df: pd.DataFrame,
+    page_idx: int
+) -> Dict[str, List[Tuple[str, int]]]:
+    res = {
+        "시행사": [],
+        "시공사": [],
+        "분양대행사": [],
+    }
+    if df.empty:
+        return res
+
+    df = df.fillna("")
+    label_col = df.iloc[:, 0].astype(str)
+
+    for i, label in enumerate(label_col):
+        roles = detect_role_from_header(label)
+        if not roles:
+            continue
+        row = df.iloc[i, 1:]
+        candidates = [normalize_company_name(v) for v in row if str(v).strip()]
+        for role in roles:
+            for c in candidates:
+                if c:
+                    res[role].append((c, page_idx))
+    return res
+
+
+def extract_from_horizontal_header_table(
+    df: pd.DataFrame,
+    page_idx: int
+) -> Dict[str, List[Tuple[str, int]]]:
+    res = {
+        "시행사": [],
+        "시공사": [],
+        "분양대행사": [],
+    }
+    if df.empty or len(df) < 2:
+        return res
+
+    df = df.fillna("")
+    header = df.iloc[0].astype(str).tolist()
+    body = df[1:]
+
+    for col_idx, h in enumerate(header):
+        roles = detect_role_from_header(h)
+        if not roles:
+            continue
+        col_values = body.iloc[:, col_idx].astype(str)
+        candidates = [
+            normalize_company_name(v)
+            for v in col_values
+            if str(v).strip()
+        ]
+        for role in roles:
+            for c in candidates:
+                if c:
+                    res[role].append((c, page_idx))
+    return res
+
+
+def extract_company_candidates_from_pdf(pdf) -> Tuple[Dict[str, List[Tuple[str, int]]], int]:
     result = {
-        "시행사": None,       # 사업주체 또는 시행사
-        "시공사": None,
-        "분양대행사": None,
+        "시행사": [],
+        "시공사": [],
+        "분양대행사": [],
     }
 
-    for page in pdf.pages:
+    last_page_idx = len(pdf.pages) - 1 if pdf.pages else 0
+
+    for page_idx, page in enumerate(pdf.pages):
         tables = page.extract_tables() or []
         for table in tables:
             if not table:
                 continue
+            df = pd.DataFrame(table)
+            if df.empty:
+                continue
 
-            header_row_idx = None
-            col_map = {}  # {"시행사": idx, "시공사": idx, "분양대행사": idx}
+            vertical = extract_from_vertical_label_table(df, page_idx)
+            horizontal = extract_from_horizontal_header_table(df, page_idx)
 
-            # 1) 헤더 행 찾기 + 각 컬럼 인덱스 기록
-            for r, row in enumerate(table):
-                cells = [(c or "").strip() for c in row]
-                joined = "".join(cells)
+            for role in result.keys():
+                result[role].extend(vertical.get(role, []))
+                result[role].extend(horizontal.get(role, []))
 
-                # '사업주체/시행사' 와 '시공사' 가 함께 있는 행이면 헤더 가능성이 큼
-                if (("사업주체" in joined or "시행사" in joined) and "시공사" in joined):
-                    header_row_idx = r
-                    for idx, cell in enumerate(cells):
-                        cell_ns = cell.replace(" ", "")
-                        if "사업주체" in cell_ns or "시행사" in cell_ns:
-                            col_map["시행사"] = idx
-                        elif "시공사" in cell_ns or "시공자" in cell_ns:
-                            col_map["시공사"] = idx
-                        elif "분양대행" in cell_ns:
-                            col_map["분양대행사"] = idx
-                    break
+    return result, last_page_idx
 
-            if header_row_idx is None or not col_map:
-                continue  # 이 테이블은 회사정보 표가 아님
 
-            # 2) 헤더 아래에서 '회사명' 행(또는 첫 데이터 행)을 찾아 회사명 추출
-            for r in range(header_row_idx + 1, len(table)):
-                row = table[r]
-                cells = [(c or "").strip() for c in row]
-                if not any(cells):
-                    continue
+def choose_final_company(
+    text_candidates: Dict[str, List[str]],
+    table_candidates: Dict[str, List[Tuple[str, int]]],
+    last_page_idx: int = None,
+) -> Dict[str, str]:
+    scores: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-                first_cell = cells[0].replace(" ", "")
+    for role, vals in table_candidates.items():
+        for name, page_idx in vals:
+            if not name:
+                continue
+            base = 3
+            bonus = 0
+            if last_page_idx is not None and page_idx == last_page_idx:
+                bonus += 2
+            scores[role][name] += base + bonus
 
-                # 회사명 / 상호 같은 라벨이 있으면 가장 우선
-                is_company_row = ("회사명" in first_cell or "상호" in first_cell)
+    for role, names in text_candidates.items():
+        for name in names:
+            if not name:
+                continue
+            scores[role][name] += 2
 
-                # 혹은 헤더 바로 다음 행(회사명 라벨이 없어도)도 후보로 인정
-                if not is_company_row and r == header_row_idx + 1:
-                    is_company_row = True
+    final = {
+        "시행사": "",
+        "시공사": "",
+        "분양대행사": "",
+    }
 
-                if not is_company_row:
-                    continue
+    for role, name_scores in scores.items():
+        if not name_scores:
+            continue
+        sorted_candidates = sorted(
+            name_scores.items(),
+            key=lambda x: (x[1], len(x[0])),
+            reverse=True,
+        )
+        final[role] = sorted_candidates[0][0]
 
-                # 실제 값 읽기
-                for key, c_idx in col_map.items():
-                    if c_idx < len(cells):
-                        val = cells[c_idx].strip()
-                        if val:
-                            result[key] = val
-                break  # 이 표에서 더 이상 찾을 필요 없음
+    return final
 
-    return result
+
+# ============================
+#  텍스트 + 표 기반 통합 추출
+# ============================
+def extract_company_from_table(pdf, text: str) -> Dict[str, str]:
+    text_candidates = extract_companies_from_text(text)
+    table_candidates, last_page_idx = extract_company_candidates_from_pdf(pdf)
+    final = choose_final_company(text_candidates, table_candidates, last_page_idx)
+    return final
 
 
 # ============================
 #  중도금 대출 조건 추출
 # ============================
 def extract_loan_condition(text: str):
-    """
-    텍스트에서 '중도금', '대출', '이자후불제', '무이자' 등의 키워드를 보고
-    중도금 대출 조건을 간단히 요약.
-    """
     condition = None
     related_lines = []
 
@@ -195,7 +386,6 @@ def extract_loan_condition(text: str):
     elif "무이자" in joined:
         condition = "무이자"
 
-    # 그래도 못 찾았으면, 힌트용으로 문장 자체를 리턴
     if not condition and joined:
         condition = joined
 
@@ -315,11 +505,12 @@ if uploaded:
     uploaded.seek(0)
     with pdfplumber.open(uploaded) as pdf:
         schedule = extract_schedule_from_table(pdf)
-        table_company = extract_company_from_table(pdf)
+        table_company = extract_company_from_table(pdf, text)
 
-    # 3) 텍스트 기반 핵심정보 + 중도금 조건
+    # 3) 텍스트 기반 핵심정보 + 중도금 조건 + 입주예정일
     core = extract_core_info(text)
     loan_cond = extract_loan_condition(text)
+    move_in = extract_move_in_date(text)
 
     # ---------------------------
     # 결과 출력
@@ -331,22 +522,21 @@ if uploaded:
 
     st.subheader("📌 핵심 정보 요약")
 
-    # 공급규모
     st.write(f"- **공급규모:** {core.get('공급규모') or '정보 없음'}")
 
-    # 시행사: 표(사업주체/시행사) → 텍스트 순
+    # NEW: 입주예정일
+    st.write(f"- **입주예정일:** {move_in or '정보 없음'}")
+
     final_siheng = table_company.get("시행사") or core.get("시행사")
     st.write(f"- **시행사:** {final_siheng or '정보 없음'}")
 
-    # 시공사: 표 → 텍스트 순
     final_sigong = table_company.get("시공사") or core.get("시공사")
     st.write(f"- **시공사:** {final_sigong or '정보 없음'}")
 
-    # 분양대행사(있으면)
-    if table_company.get("분양대행사"):
-        st.write(f"- **분양대행사:** {table_company['분양대행사']}")
+    final_agency = table_company.get("분양대행사")
+    if final_agency:
+        st.write(f"- **분양대행사:** {final_agency}")
 
-    # 중도금 대출 조건
     st.write(f"- **중도금 대출 조건:** {loan_cond or '정보 없음'}")
 
     # ---------------------------
