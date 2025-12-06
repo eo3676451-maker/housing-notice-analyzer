@@ -95,16 +95,17 @@ def normalize_company_name(name: str) -> str:
 
 COMPANY_HINT_KEYWORDS = [
     "조합", "건설", "주식회사", "㈜", "(주)", "개발",
-    "디앤씨", "디엔씨", "산업", "주택", "엔지니어링",
+    "디앤씨", "디엔씨", "산업", "엔지니어링",
     "홀딩스", "투자", "공사", "기업", "주택도시"
 ]
 
 
 def looks_like_company(name: str) -> bool:
     """
-    주소(부산광역시~, 서울특별시~ 등)처럼 보이는 문자열을 걸러내고
-    '조합', '건설', '주식회사' 등 회사 관련 키워드가 포함된
-    30자 이하의 문자열만 회사명으로 인정
+    - 길이 30자 초과 → 회사 아님
+    - '무주택기간 적용기준' 같이 '기간/기준' 위주의 문장 → 회사 아님
+    - 주소처럼 보이면 회사 키워드 없으면 제외
+    - 나머지는 COMPANY_HINT_KEYWORDS 포함 여부로 판별
     """
     if not name:
         return False
@@ -112,13 +113,23 @@ def looks_like_company(name: str) -> bool:
     if len(name) > 30:
         return False
 
-    # 주소로 보이는 패턴은 기본적으로 제외
+    # '...기준', '...적용기준' 등으로 끝나면 회사가 아니라 설명일 가능성이 큼
+    bad_endings = ["기준", "적용기준", "적용 기준", "산정기준"]
+    if any(name.endswith(be) for be in bad_endings):
+        return False
+
+    # '기간'이 포함되어 있고, 강한 회사 키워드가 없으면 설명문으로 간주
+    strong_keywords = ["조합", "건설", "주식회사", "㈜", "(주)", "개발", "공사", "기업"]
+    if "기간" in name and not any(k in name for k in strong_keywords):
+        return False
+
+    # 주소처럼 보이는 문자열은 기본 제외 (회사 키워드가 같이 있으면 허용)
     if any(word in name for word in ["광역시", "특별시", "시 ", "군 ", "구 ", "동 ", "로 ", "길 "]):
-        # 다만 회사 키워드가 같이 있으면 허용
         if not any(k in name for k in COMPANY_HINT_KEYWORDS):
             return False
 
     return any(k in name for k in COMPANY_HINT_KEYWORDS)
+
 
 
 # ============================
