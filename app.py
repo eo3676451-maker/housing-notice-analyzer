@@ -51,6 +51,39 @@ def parse_location(text: str):
                 return cleaned
     return None
 
+# ============================
+#  불필요 문단(유의사항·무주택기간 등) 제거
+# ============================
+def filter_irrelevant_sections(text: str) -> str:
+    """
+    모집공고 중 4~7, 11항목에서 자주 등장하는
+    '유의사항/무주택기간 적용기준/기타 안내' 등은
+    핵심정보 추출에 불필요하므로 분석 텍스트에서 제거한다.
+    """
+    remove_keywords = [
+        "무주택기간 적용기준",
+        "무주택 기간 적용기준",
+        "무주택기간 산정기준",
+        "청약 시 유의사항",
+        "청약시 유의사항",
+        "유의사항",
+        "기타 사항",
+        "기타사항",
+        "공급(분양)계약에 관한 유의사항",
+        "계약체결시 유의사항",
+    ]
+
+    filtered_lines = []
+    for line in text.splitlines():
+        s = line.strip()
+        # 제거 키워드가 포함된 줄은 통째로 버린다
+        if any(k in s for k in remove_keywords):
+            continue
+        filtered_lines.append(line)
+
+    return "\n".join(filtered_lines)
+
+
 
 # ============================
 #  회사명 정규화 + 판별 유틸
@@ -589,6 +622,9 @@ if uploaded:
     with pdfplumber.open(uploaded) as pdf:
         for p in pdf.pages:
             text += (p.extract_text() or "") + "\n"
+     # 1-1) 불필요 문단 제거 (4~7, 11항 유의사항 등)
+    text = filter_irrelevant_sections(text)
+
 
     # 2) 표 기반 정보 (청약일정 + 회사정보)
     uploaded.seek(0)
