@@ -3,7 +3,6 @@ import pdfplumber
 import re
 from datetime import datetime
 import pandas as pd
-from io import BytesIO
 
 # ============================
 #  공통 유틸
@@ -16,19 +15,26 @@ def parse_ymd(date_str: str):
 
 
 # ============================
-#  분석 함수 1: 단지명 추출
+#  단지명 추출
 # ============================
 def parse_complex_name(text: str):
+    raw = None
     for line in text.splitlines():
+        line = line.strip()
         if "입주자모집공고" in line:
-            cleaned = line.replace("입주자모집공고", "").strip()
-            cleaned = re.sub(r"\s+", " ", cleaned)
-            return cleaned.strip(" ,·-")
-    return None
+            raw = line.replace("입주자모집공고", "").strip()
+            break
+
+    if not raw:
+        return None
+
+    name = re.sub(r"\s+", " ", raw)
+    name = name.strip(" ,·-")
+    return name or None
 
 
 # ============================
-#  분석 함수 2: 공급위치 추출
+#  공급위치 추출
 # ============================
 def parse_location(text: str):
     keywords = ["공급위치", "사업위치", "건설위치", "대지위치"]
@@ -36,7 +42,8 @@ def parse_location(text: str):
         for key in keywords:
             if key in line:
                 cleaned = line.replace(key, "")
-                cleaned = cleaned.replace(":", "").replace("■", "")
+                cleaned = cleaned.replace(":", "")
+                cleaned = cleaned.replace("■", "")
                 cleaned = cleaned.replace("위치", "").strip()
                 cleaned = re.sub(r"\s+", " ", cleaned)
                 return cleaned
@@ -44,10 +51,14 @@ def parse_location(text: str):
 
 
 # ============================
-#  분석 함수 3: 핵심 정보 추출 (텍스트 기반)
+#  핵심 정보(공급규모 + 텍스트 백업용 시행/시공) 추출
 # ============================
 def extract_core_info(text: str):
-    info = {"공급규모": None, "시행사": None, "시공사": None}
+    info = {
+        "공급규모": None,
+        "시행사": None,   # 텍스트에서 찾는 백업용
+        "시공사": None,   # 텍스트에서 찾는 백업용
+    }
 
     for line in text.splitlines():
         s = line.strip()
@@ -55,95 +66,111 @@ def extract_core_info(text: str):
         # 공급규모
         if not info["공급규모"] and ("공급규모" in s or "총 공급세대수" in s):
             cleaned = s
-            cleaned = cleaned.replace("■", "").replace("●", "")
-            cleaned = cleaned.replace("공급규모", "").replace("총 공급세대수", "")
-            cleaned = cleaned.replace(":", "").strip()
+            cleaned = cleaned.replace("■", "")
+            cleaned = cleaned.replace("●", "")
+            cleaned = cleaned.replace("공급규모", "")
+            cleaned = cleaned.replace("총 공급세대수", "")
+            cleaned = cleaned.replace(":", "")
+            cleaned = cleaned.strip()
             info["공급규모"] = cleaned
 
-        # 시행사 (너무 긴 문장은 제외)
-        if (
-            not info["시행사"]
-            and ("시행자" in s or "시행사" in s)
-            and len(s) <= 60
-        ):
-            cleaned = s.replace("■", "").replace("●", "")
+        # 시행사(텍스트에 노출되는 경우)
+        if not info["시행사"] and ("시행자" in s or "시행사" in s):
+            cleaned = s
+            cleaned = cleaned.replace("■", "").replace("●", "")
             cleaned = cleaned.replace("시행자", "").replace("시행사", "")
-            cleaned = cleaned.replace(":", "").strip()
+            cleaned = cleaned.replace(":", "")
+            cleaned = cleaned.strip()
             info["시행사"] = cleaned
 
-        # 시공사
-        if (
-            not info["시공사"]
-            and ("시공자" in s or "시공사" in s)
-            and len(s) <= 60
-        ):
-            cleaned = s.replace("■", "").replace("●", "")
+        # 시공사(텍스트에 노출되는 경우)
+        if not info["시공사"] and ("시공자" in s or "시공사" in s):
+            cleaned = s
+            cleaned = cleaned.replace("■", "").replace("●", "")
             cleaned = cleaned.replace("시공자", "").replace("시공사", "")
-            cleaned = cleaned.replace(":", "").strip()
+            cleaned = cleaned.replace(":", "")
+            cleaned = cleaned.strip()
             info["시공사"] = cleaned
 
     return info
 
 
 # ============================
-#  분석 함수 4: 표에서 회사정보 추출
+#  표에서 사업주체 / 시공사 / 분양대행사 추출
 # ============================
-def extract_company_from_tables(pdf):
-    result = {"시행사": None, "시공사": None}
+def extract_company_from_table(pdf):
+    """
+    '사업주체 및 시공회사' 같은 표에서
+    사업주체(=시행사), 시공사, 분양대행사를 가져온다.
+    """
+    result = {
+        "시행사": None,       # 사업주체 또는 시행사
+        "시공사": None,
+        "분양대행사": None,
+    }
+
+    # 표 헤더에서 찾을 후보 문자열
+    target_cols = ["사업주체", "시행사", "시공사", "분양대행사", "분양 대행사"]
 
     for page in pdf.pages:
         tables = page.extract_tables() or []
         for table in tables:
-            rows = [[(c or "").strip() for c in row] for row in table]
+            for row in table:
+                if not row:
+                    continue
+                row_clean = [(c or "").strip() for c in row]
 
-            header_idx = None
-            for i, row in enumerate(rows):
-                if "사업주체" in " ".join(row) and "시공사" in " ".join(row):
-                    header_idx = i
-                    break
-
-            if header_idx is None:
-                continue
-
-            header = rows[header_idx]
-
-            col = {}
-            for idx, h in enumerate(header):
-                if "사업주체" in h:
-                    col["시행사"] = idx
-                if "시공사" in h:
-                    col["시공사"] = idx
-
-            for r in range(header_idx + 1, len(rows)):
-                row = rows[r]
-                if "회사명" in row[0]:
-                    if "시행사" in col:
-                        result["시행사"] = row[col["시행사"]]
-                    if "시공사" in col:
-                        result["시공사"] = row[col["시공사"]]
-                    return result
+                for idx, cell in enumerate(row_clean):
+                    cell_no_space = cell.replace(" ", "")
+                    for key in target_cols:
+                        if key.replace(" ", "") in cell_no_space:
+                            # 같은 행, 바로 오른쪽 셀에 값이 있는 경우가 대부분
+                            if idx + 1 < len(row_clean):
+                                value = row_clean[idx + 1].strip()
+                                if value and len(value) > 1:
+                                    if "사업주체" in key or "시행" in key:
+                                        result["시행사"] = value
+                                    elif "시공" in key:
+                                        result["시공사"] = value
+                                    elif "분양대행" in key:
+                                        result["분양대행사"] = value
     return result
 
 
 # ============================
-#  분석 함수 5: 중도금 대출 이자 조건 추출
+#  중도금 대출 조건 추출
 # ============================
 def extract_loan_condition(text: str):
-    text_nospace = text.replace(" ", "")
+    """
+    텍스트에서 '중도금', '대출', '이자후불제', '무이자' 등의 키워드를 보고
+    중도금 대출 조건을 간단히 요약.
+    """
+    condition = None
+    related_lines = []
 
-    if ("중도금대출" in text_nospace or "중도금" in text_nospace):
-        if "이자후불제" in text_nospace:
-            return "이자후불제"
-        if "무이자" in text_nospace:
-            return "무이자"
-        if "이자선납" in text_nospace:
-            return "이자선납제"
+    for line in text.splitlines():
+        s = line.strip()
+        if "중도금" in s and "대출" in s:
+            related_lines.append(s)
+        elif "중도금" in s and "이자" in s:
+            related_lines.append(s)
 
-    return "표기 없음"
+    joined = " ".join(related_lines)
+
+    if "이자후불제" in joined or "이자 후불제" in joined:
+        condition = "이자후불제"
+    elif "무이자" in joined:
+        condition = "무이자"
+
+    # 그래도 못 찾았으면, 그래도 힌트용으로 문장 자체를 리턴
+    if not condition and joined:
+        condition = joined
+
+    return condition
 
 
 # ============================
-#  분석 함수 6: 표에서 청약 일정 추출
+#  표에서 청약 일정 추출
 # ============================
 def extract_schedule_from_table(pdf):
     schedule = {
@@ -159,14 +186,22 @@ def extract_schedule_from_table(pdf):
     header_map = {
         "입주자모집공고": "입주자모집공고일",
         "입주자 모집공고": "입주자모집공고일",
+
         "특별공급접수": "특별공급 접수일",
         "특별공급 신청": "특별공급 접수일",
+        "특별공급 접수": "특별공급 접수일",
+
         "1순위 접수": "일반공급 1순위 접수일",
         "1순위": "일반공급 1순위 접수일",
+        "일반공급 1순위 접수": "일반공급 1순위 접수일",
+
         "2순위 접수": "일반공급 2순위 접수일",
         "2순위": "일반공급 2순위 접수일",
+        "일반공급 2순위 접수": "일반공급 2순위 접수일",
+
         "당첨자발표일": "당첨자발표일",
         "당첨자 발표": "당첨자발표일",
+
         "서류접수": "서류접수",
         "정당계약": "계약체결",
         "계약체결": "계약체결",
@@ -175,11 +210,13 @@ def extract_schedule_from_table(pdf):
     date_pattern = r"\d{4}\.\d{1,2}\.\d{1,2}"
 
     def update(label, new_val):
-        if schedule[label] is None:
+        old = schedule.get(label)
+        if not old:
             schedule[label] = new_val
             return
+
         try:
-            old_d = datetime.strptime(re.findall(date_pattern, schedule[label])[0], "%Y.%m.%d")
+            old_d = datetime.strptime(re.findall(date_pattern, old)[0], "%Y.%m.%d")
             new_d = datetime.strptime(re.findall(date_pattern, new_val)[0], "%Y.%m.%d")
             if new_d > old_d:
                 schedule[label] = new_val
@@ -188,26 +225,36 @@ def extract_schedule_from_table(pdf):
 
     for page in pdf.pages:
         tables = page.extract_tables() or []
+
         for table in tables:
+            if not table:
+                continue
+
             rows = table
+
             for r, row in enumerate(rows):
                 for c, cell in enumerate(row):
                     if not cell:
                         continue
                     cell_t = cell.replace(" ", "")
+
                     for key, label in header_map.items():
                         if key.replace(" ", "") in cell_t:
+
                             for rr in range(r + 1, len(rows)):
                                 if c >= len(rows[rr]):
                                     continue
+
                                 raw = rows[rr][c] or ""
                                 found = re.findall(date_pattern, raw)
                                 if not found:
                                     continue
+
                                 if label in ["서류접수", "계약체결"] and len(found) >= 2:
                                     update(label, f"{found[0]} ~ {found[-1]}")
                                 else:
                                     update(label, found[0])
+
                                 break
 
     return schedule
@@ -219,51 +266,63 @@ def extract_schedule_from_table(pdf):
 st.set_page_config(page_title="입주자모집공고 분석기", layout="wide")
 
 st.sidebar.title("📂 PDF 업로드")
-uploaded = st.sidebar.file_uploader("PDF 파일 업로드", type=["pdf"])
+uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"])
 
 st.title("🏢 입주자모집공고 분석기 (자동 분석)")
 
 if uploaded:
+    # 1) 전체 텍스트
     uploaded.seek(0)
     text = ""
-
     with pdfplumber.open(uploaded) as pdf:
         for p in pdf.pages:
             text += (p.extract_text() or "") + "\n"
 
+    # 2) 표 기반 정보 (청약일정 + 회사정보)
     uploaded.seek(0)
     with pdfplumber.open(uploaded) as pdf:
         schedule = extract_schedule_from_table(pdf)
-        company = extract_company_from_tables(pdf)
+        table_company = extract_company_from_table(pdf)
+
+    # 3) 텍스트 기반 핵심정보 + 중도금 조건
+    core = extract_core_info(text)
+    loan_cond = extract_loan_condition(text)
 
     # ---------------------------
-    # 자동 분석 결과 표시
+    # 결과 출력
     # ---------------------------
     st.subheader("🧠 자동 분석 결과")
 
     st.markdown(f"**🏢 단지명:** {parse_complex_name(text) or '정보 없음'}")
     st.markdown(f"**📍 공급 위치:** {parse_location(text) or '정보 없음'}")
 
-    # 핵심 정보(텍스트 기반)
-    core = extract_core_info(text)
-
-    # 표 기반 데이터가 더 정확 → 덮어쓰기
-    if company.get("시행사"):
-        core["시행사"] = company["시행사"]
-    if company.get("시공사"):
-        core["시공사"] = company["시공사"]
-
     st.subheader("📌 핵심 정보 요약")
-    for k, v in core.items():
-        st.write(f"- **{k}**: {v or '정보 없음'}")
 
-    # 🔥 중도금 대출 이자 조건 분석 추가
-    st.markdown(f"**💰 중도금 대출 조건:** {extract_loan_condition(text)}")
+    # 공급규모
+    st.write(f"- **공급규모:** {core.get('공급규모') or '정보 없음'}")
+
+    # 시행사: 표(사업주체/시행사) → 텍스트 순
+    final_siheng = (
+        table_company.get("시행사")
+        or core.get("시행사")
+    )
+    st.write(f"- **시행사:** {final_siheng or '정보 없음'}")
+
+    # 시공사: 표 → 텍스트 순
+    final_sigong = table_company.get("시공사") or core.get("시공사")
+    st.write(f"- **시공사:** {final_sigong or '정보 없음'}")
+
+    # 분양대행사(있으면)
+    if table_company.get("분양대행사"):
+        st.write(f"- **분양대행사:** {table_company['분양대행사']}")
+
+    # 중도금 대출 조건
+    st.write(f"- **중도금 대출 조건:** {loan_cond or '정보 없음'}")
 
     # ---------------------------
-    # 청약 일정 표시
+    # 청약 일정
     # ---------------------------
-    st.subheader("🗓 청약 일정 자동 분류")
+    st.subheader("📅 청약 일정 자동 분류")
 
     order = [
         "입주자모집공고일",
