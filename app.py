@@ -965,7 +965,7 @@ if uploaded:
     else:
         st.info("공급대상 표를 찾지 못했습니다.")
 
-    # ---------------------------
+        # ---------------------------
     # 공급금액표 출력
     # ---------------------------
     st.subheader("💰 공급금액표 (동·호·층별)")
@@ -981,7 +981,7 @@ if uploaded:
     complex_name = parse_complex_name(text) or ""
     location = parse_location(text) or ""
 
-        excel_bytes = make_excel_file(
+    excel_bytes = make_excel_file(
         complex_name=complex_name,
         location=location,
         core=core,
@@ -1004,4 +1004,5 @@ if uploaded:
 
 else:
     st.info("PDF 파일을 업로드해주세요.")
+
 
