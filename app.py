@@ -158,7 +158,10 @@ def extract_core_info(text: str):
 
     for line in text.splitlines():
         s = line.strip()
+        if not s:
+            continue
 
+        # 공급규모
         if not info["공급규모"] and ("공급규모" in s or "총 공급세대수" in s):
             cleaned = s
             cleaned = cleaned.replace("■", "")
@@ -168,24 +171,37 @@ def extract_core_info(text: str):
             cleaned = cleaned.replace(":", "")
             cleaned = cleaned.strip()
             info["공급규모"] = cleaned
+            continue
 
+        # 시행사 (텍스트 백업용)
         if not info["시행사"] and ("시행자" in s or "시행사" in s):
             cleaned = s
             cleaned = cleaned.replace("■", "").replace("●", "")
             cleaned = cleaned.replace("시행자", "").replace("시행사", "")
             cleaned = cleaned.replace(":", "")
             cleaned = cleaned.strip()
-            info["시행사"] = cleaned
 
+            # 회사명 형태로 정규화 + 너무 길면 버리기(문단 방지)
+            cleaned = normalize_company_name(cleaned)
+            if cleaned and len(cleaned) <= 30:
+                info["시행사"] = cleaned
+            continue
+
+        # 시공사 (텍스트 백업용)
         if not info["시공사"] and ("시공자" in s or "시공사" in s):
             cleaned = s
             cleaned = cleaned.replace("■", "").replace("●", "")
             cleaned = cleaned.replace("시공자", "").replace("시공사", "")
             cleaned = cleaned.replace(":", "")
             cleaned = cleaned.strip()
-            info["시공사"] = cleaned
+
+            cleaned = normalize_company_name(cleaned)
+            if cleaned and len(cleaned) <= 30:
+                info["시공사"] = cleaned
+            continue
 
     return info
+
 
 
 # ============================
