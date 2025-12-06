@@ -1008,8 +1008,6 @@ if uploaded:
     price_rows=price_rows,     # 🔹 추가
 )
 
-    )
-
     st.download_button(
         label="📥 엑셀 다운로드",
         data=excel_bytes,
