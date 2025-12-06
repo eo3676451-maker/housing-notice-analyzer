@@ -1,6 +1,7 @@
 import streamlit as st
 import pdfplumber
 import re
+from io import BytesIO
 from datetime import datetime
 import pandas as pd
 from typing import Dict, List, Tuple
@@ -513,6 +514,41 @@ def extract_loan_condition(text: str):
 
     return condition
 
+# ============================
+#  엑셀 다운로드용 파일 생성
+# ============================
+def make_excel_file(
+    complex_name: str,
+    location: str,
+    core: dict,
+    move_in: str | None,
+    final_siheng: str | None,
+    final_sigong: str | None,
+    final_agency: str | None,
+    loan_cond: str | None,
+    schedule_rows: list,
+) -> BytesIO:
+    # 요약 시트
+    summary_rows = [
+        {"항목": "단지명", "값": complex_name},
+        {"항목": "공급위치", "값": location},
+        {"항목": "공급규모", "값": core.get("공급규모") or ""},
+        {"항목": "입주예정일", "값": move_in or ""},
+        {"항목": "시행사", "값": final_siheng or ""},
+        {"항목": "시공사", "값": final_sigong or ""},
+        {"항목": "분양대행사", "값": final_agency or ""},
+        {"항목": "중도금 대출 조건", "값": loan_cond or ""},
+    ]
+    df_summary = pd.DataFrame(summary_rows)
+    df_schedule = pd.DataFrame(schedule_rows)
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        df_summary.to_excel(writer, index=False, sheet_name="핵심정보")
+        df_schedule.to_excel(writer, index=False, sheet_name="청약일정")
+    output.seek(0)
+    return output
+
 
 # ============================
 #  표에서 청약 일정 추출
@@ -677,13 +713,39 @@ if uploaded:
         "계약체결",
     ]
 
-    rows = []
+        rows = []
     for key in order:
         val = schedule.get(key)
         rows.append({"항목": key, "일정": val or "정보 없음"})
         st.write(f"- **{key}**: {val or '정보 없음'}")
 
-    st.table(pd.DataFrame(rows))
+    df_schedule = pd.DataFrame(rows)
+    st.table(df_schedule)
+
+    # ---------------------------
+    # 엑셀 다운로드 버튼
+    # ---------------------------
+    complex_name = parse_complex_name(text) or ""
+    location = parse_location(text) or ""
+
+    excel_bytes = make_excel_file(
+        complex_name=complex_name,
+        location=location,
+        core=core,
+        move_in=move_in,
+        final_siheng=final_siheng,
+        final_sigong=final_sigong,
+        final_agency=final_agency,
+        loan_cond=loan_cond,
+        schedule_rows=rows,
+    )
+
+    st.download_button(
+        label="📥 엑셀로 다운로드",
+        data=excel_bytes,
+        file_name=f"{complex_name or '분양단지'}_모집공고_자동분석.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 else:
     st.info("PDF 파일을 업로드해주세요.")
