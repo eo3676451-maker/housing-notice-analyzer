@@ -794,9 +794,12 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     - 해당세대수
     - 공급금액 소계
     를 추출한다.
-    여러 페이지에 걸쳐 있으면 모든 표를 다 모아서 반환한다.
+    여러 페이지(50, 59A, 59B, 59C, 78, 84A, 84B, 84C ...)에 걸친
+    모든 공급금액표를 한 번에 모은다.
     """
     results: List[Dict[str, str]] = []
+
+    MONEY_KEYS = ["공급금액표", "공급금액", "대지비", "건축비", "계약금", "중도금", "잔금"]
 
     for page in pdf.pages:
         tables = page.extract_tables() or []
@@ -805,9 +808,14 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 continue
 
             df = pd.DataFrame(table).fillna("")
-            header_idx = None
 
-            # 🔹 '주택형' + '약식표기' 가 같이 있는 행을 헤더로 판단
+            # 🔹 전체 텍스트에 돈 관련 키워드가 없으면 → 공급금액표 아님
+            all_txt = "".join(df.astype(str).values.ravel()).replace(" ", "")
+            if not any(k in all_txt for k in MONEY_KEYS):
+                continue
+
+            # 🔹 '주택형' + '약식표기/약식' 이 같이 있는 행을 헤더로 판단
+            header_idx = None
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
                 if "주택형" in row_txt and ("약식표기" in row_txt or "약식 표기" in row_txt or "약식" in row_txt):
@@ -815,10 +823,8 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     break
 
             if header_idx is None:
-                # 이 표는 공급금액표가 아닐 가능성이 높음
                 continue
 
-            # 헤더 포함 부분만 다시 사용
             df2 = df.iloc[header_idx:].reset_index(drop=True)
             ncols = df2.shape[1]
 
@@ -841,11 +847,10 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["층구분"] = c
                 elif "해당세대수" in hdr or "해당세대" in hdr:
                     col_map["해당세대수"] = c
-                # 공급금액 소계
                 elif "공급금액" in hdr and "소계" in hdr:
                     col_map["공급금액 소계"] = c
                 elif "소계" in hdr and "공급금액 소계" not in col_map:
-                    # 예비용: 위 조건 못 잡았을 때 첫 '소계'를 공급금액 소계로 사용
+                    # 예비용: 첫 '소계'를 공급금액 소계로 사용
                     col_map["공급금액 소계"] = c
 
             if not col_map:
@@ -861,7 +866,11 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 row = df2.iloc[r]
                 row_txt = "".join(str(x) for x in row.tolist())
 
-                # '합계' 행 제거
+                # 🔹 중간에 또 등장하는 헤더(주택형/약식표기)는 건너뛰기
+                if "주택형" in row_txt and ("약식표기" in row_txt or "약식 표기" in row_txt or "약식" in row_txt):
+                    continue
+
+                # 🔹 '합계' 행 제거
                 if "합계" in row_txt:
                     continue
 
@@ -895,13 +904,10 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 if not rec.get("공급금액 소계") and not rec.get("해당세대수"):
                     continue
 
-                # 혹시 중간에 또 헤더가 끼어들어오면 제거
-                if "동/호" in rec.get("동/호별", "") or "층구분" in rec.get("층구분", ""):
-                    continue
-
                 results.append(rec)
 
     return results
+
 
 
 
