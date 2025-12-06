@@ -68,7 +68,7 @@ def normalize_company_name(name: str) -> str:
     name = name.lstrip("※*•-·[]() ")
 
     # 뒤쪽에 붙는 설명(사업주체, 대표자 등) 잘라내기
-    name = re.sub(r"(주식회사|㈜|\(주\))[^가-힣A-Za-z0-9]*$", r"\1", name)
+    name = re.sub(r"\s+(주식회사|㈜|\(주\))$", r" \1", name)
 
     # 앞뒤 장식 제거
     name = name.strip(":-·,[]() ")
