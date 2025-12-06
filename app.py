@@ -874,6 +874,15 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 if "합계" in row_txt:
                     continue
 
+                # 🔹 공급금액 소계 열이 '소계'만 적힌 헤더 줄이면 스킵
+                idx_sum = col_map.get("공급금액 소계")
+                if idx_sum is not None and idx_sum < len(row):
+                    cell_sum = str(row.iloc[idx_sum]).strip()
+                    # 숫자가 하나도 없고 '소계'만 있는 경우 → 헤더로 판단
+                    if cell_sum == "소계":
+                        continue
+
+
                 rec: Dict[str, str] = {}
 
                 # 주택형 / 약식표기 forward-fill
