@@ -649,6 +649,200 @@ def extract_schedule_from_table(pdf):
 
     return schedule
 
+# ============================
+#  공급대상(타입별) 추출
+# ============================
+def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
+    """
+    '공급대상' 표에서
+    - 주택형
+    - 약식표기
+    - 주거 전용면적
+    - 소계(주택공급면적 소계)
+    - 총 공급 세대수
+    - 특별공급 세대수
+    - 일반공급 세대수
+    를 추출한다.
+    """
+    results: List[Dict[str, str]] = []
+
+    for page in pdf.pages:
+        tables = page.extract_tables() or []
+        for table in tables:
+            if not table or len(table) < 3:
+                continue
+
+            df = pd.DataFrame(table).fillna("")
+            header_idx = None
+
+            # '주택형' + '약식표기' 가 같이 있는 행을 헤더로 판단
+            for i, row in df.iterrows():
+                row_txt = "".join(str(x) for x in row.tolist())
+                if "주택형" in row_txt and ("약식표기" in row_txt or "약식 표기" in row_txt or "약식" in row_txt):
+                    header_idx = i
+                    break
+
+            if header_idx is None:
+                continue
+
+            df2 = df.iloc[header_idx:].reset_index(drop=True)
+            ncols = df2.shape[1]
+
+            col_map: Dict[str, int] = {}
+            for c in range(ncols):
+                # 첫 두 줄을 합쳐서 헤더 텍스트로 사용
+                hdr = "".join(df2.iloc[0:2, c].astype(str).tolist())
+                hdr = hdr.replace(" ", "").replace("\n", "")
+
+                if "주택형" in hdr:
+                    col_map["주택형"] = c
+                elif "약식표기" in hdr or "약식표시" in hdr or "약식" in hdr:
+                    col_map["약식표기"] = c
+                elif "주거전용면적" in hdr or ("전용" in hdr and "면적" in hdr):
+                    col_map["주거 전용면적"] = c
+                elif "소계" in hdr and ("주택공급" in hdr or "공급면적" in hdr):
+                    col_map["소계(주택공급면적)" ] = c
+                elif ("총공급" in hdr and "세대수" in hdr) or "총공급세대수" in hdr:
+                    col_map["총 공급 세대수"] = c
+                elif "특별공급" in hdr and ("세대수" in hdr or "계" in hdr):
+                    col_map["특별공급 세대수"] = c
+                elif "일반공급" in hdr and "세대수" in hdr:
+                    col_map["일반공급 세대수"] = c
+
+            if not col_map:
+                continue
+
+            # 데이터 행(헤더 이후)
+            for r in range(1, df2.shape[0]):
+                row = df2.iloc[r]
+                row_txt = "".join(str(x) for x in row.tolist())
+                # '합계' 행은 스킵
+                if "합계" in row_txt:
+                    continue
+
+                rec: Dict[str, str] = {}
+                for key, idx in col_map.items():
+                    if idx < len(row):
+                        rec[key] = str(row.iloc[idx]).strip()
+                    else:
+                        rec[key] = ""
+
+                # 주택형/약식표기 둘 다 비어 있으면 스킵
+                if not (rec.get("주택형") or rec.get("약식표기")):
+                    continue
+
+                results.append(rec)
+
+            # 공급대상 표는 보통 한 번만 나오니, 첫 표만 사용
+            if results:
+                return results
+
+    return results
+
+# ============================
+#  공급금액표 추출
+# ============================
+def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
+    """
+    '공급금액표'에서
+    - 주택형
+    - 약식표기
+    - 동/호별
+    - 층구분
+    - 해당세대수
+    - 공급금액 소계
+    를 추출한다.
+    """
+    results: List[Dict[str, str]] = []
+
+    for page in pdf.pages:
+        tables = page.extract_tables() or []
+        for table in tables:
+            if not table or len(table) < 3:
+                continue
+
+            df = pd.DataFrame(table).fillna("")
+            header_idx = None
+
+            # '해당세대수' + '공급금액' 이 같이 있는 행을 헤더로 판단
+            for i, row in df.iterrows():
+                row_txt = "".join(str(x) for x in row.tolist())
+                if "해당세대수" in row_txt and "공급금액" in row_txt:
+                    header_idx = i
+                    break
+
+            if header_idx is None:
+                continue
+
+            df2 = df.iloc[header_idx:].reset_index(drop=True)
+            ncols = df2.shape[1]
+
+            col_map: Dict[str, int] = {}
+            for c in range(ncols):
+                hdr = "".join(df2.iloc[0:2, c].astype(str).tolist())
+                hdr = hdr.replace(" ", "").replace("\n", "")
+
+                if "주택형" in hdr:
+                    col_map["주택형"] = c
+                elif "약식표기" in hdr or "약식표시" in hdr or "약식" in hdr:
+                    col_map["약식표기"] = c
+                elif ("동" in hdr and "호" in hdr):
+                    col_map["동/호별"] = c
+                elif "층구분" in hdr or ("층" in hdr and "구분" in hdr):
+                    col_map["층구분"] = c
+                elif "해당세대수" in hdr or "해당세대" in hdr:
+                    col_map["해당세대수"] = c
+                elif "공급금액" in hdr and "소계" in hdr:
+                    col_map["공급금액 소계"] = c
+
+            if not col_map:
+                continue
+
+            current_type = ""
+            current_abbr = ""
+
+            for r in range(1, df2.shape[0]):
+                row = df2.iloc[r]
+                row_txt = "".join(str(x) for x in row.tolist())
+                if "합계" in row_txt:
+                    continue
+
+                rec: Dict[str, str] = {}
+
+                # 주택형 / 약식표기 forward-fill
+                idx_type = col_map.get("주택형")
+                if idx_type is not None and idx_type < len(row):
+                    val = str(row.iloc[idx_type]).strip()
+                    if val:
+                        current_type = val
+                rec["주택형"] = current_type
+
+                idx_abbr = col_map.get("약식표기")
+                if idx_abbr is not None and idx_abbr < len(row):
+                    val = str(row.iloc[idx_abbr]).strip()
+                    if val:
+                        current_abbr = val
+                rec["약식표기"] = current_abbr
+
+                for key, idx in col_map.items():
+                    if key in ["주택형", "약식표기"]:
+                        continue
+                    if idx is not None and idx < len(row):
+                        rec[key] = str(row.iloc[idx]).strip()
+                    else:
+                        rec[key] = ""
+
+                # 공급금액 소계 / 해당세대수 둘 다 없으면 의미 없는 행이므로 스킵
+                if not rec.get("공급금액 소계") and not rec.get("해당세대수"):
+                    continue
+
+                results.append(rec)
+
+            if results:
+                return results
+
+    return results
+
 
 # ============================
 # Streamlit UI
@@ -672,11 +866,13 @@ if uploaded:
     text = filter_irrelevant_sections(text)
 
 
-    # 2) 표 기반 정보 (청약일정 + 회사정보)
+     # 2) 표 기반 정보 (청약일정 + 회사정보 + 공급대상 + 공급금액표)
     uploaded.seek(0)
     with pdfplumber.open(uploaded) as pdf:
         schedule = extract_schedule_from_table(pdf)
         table_company = extract_company_from_table(pdf, text)
+        supply_rows = extract_supply_target_from_tables(pdf)
+        price_rows = extract_price_table_from_tables(pdf)
 
     # 3) 텍스트 기반 핵심정보 + 중도금 조건 + 입주예정일
     core = extract_core_info(text)
@@ -708,7 +904,7 @@ if uploaded:
 
     st.write(f"- **중도금 대출 조건:** {loan_cond or '정보 없음'}")
 
-        # ---------------------------
+    # ---------------------------
     # 청약 일정
     # ---------------------------
     st.subheader("📅 청약 일정 자동 분류")
@@ -731,6 +927,27 @@ if uploaded:
 
     df_schedule = pd.DataFrame(rows)
     st.table(df_schedule)
+
+    # ---------------------------
+    # 공급대상 표 출력
+    # ---------------------------
+    st.subheader("🏠 공급대상 (타입별 요약)")
+    if supply_rows:
+        df_supply = pd.DataFrame(supply_rows)
+        st.table(df_supply)
+    else:
+        st.info("공급대상 표를 찾지 못했습니다.")
+
+    # ---------------------------
+    # 공급금액표 출력
+    # ---------------------------
+    st.subheader("💰 공급금액표 (동·호·층별)")
+    if price_rows:
+        df_price = pd.DataFrame(price_rows)
+        st.table(df_price)
+    else:
+        st.info("공급금액표를 찾지 못했습니다.")
+
 
     # ---------------------------
     # 엑셀 다운로드 버튼
