@@ -684,6 +684,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
     - 특별공급 세대수(기관추천+다자녀+신혼부부+노부모부양+생애최초 합산)
     - 일반공급 세대수
     를 추출한다.
+    → 여러 페이지/여러 표에 걸쳐 있어도 전부 누적.
     """
     results: List[Dict[str, str]] = []
 
@@ -760,7 +761,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 rec["총 공급 세대수"] = get_val("총 공급 세대수")
                 rec["일반공급 세대수"] = get_val("일반공급 세대수")
 
-                # 특별공급 세대수 = 기관추천 + 다자녀 + 신혼부부 + 노부모부양 + 생애최초
+                # 🔹 특별공급 세대수 = 기관추천 + 다자녀 + 신혼부부 + 노부모부양 + 생애최초
                 special_total = 0
                 for k in ["기관추천", "다자녀가구", "신혼부부", "노부모부양", "생애최초"]:
                     idx = col_map.get(k)
@@ -779,14 +780,12 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
 
                 results.append(rec)
 
-            if results:
-                return results
-
     return results
 
 
+
 # ============================
-#  공급금액표 추출
+#  공급금액표 추출 (동·호·층별, 전체 타입)
 # ============================
 def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     """
@@ -798,6 +797,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     - 해당세대수
     - 공급금액 소계
     를 추출한다.
+    여러 페이지·여러 표에 걸쳐 있어도 전부 누적.
     """
     results: List[Dict[str, str]] = []
 
@@ -844,7 +844,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["층구분"] = c
                 elif "해당세대수" in hdr or "해당세대" in hdr:
                     col_map["해당세대수"] = c
-                # '소계'만 있어도 공급금액 소계로 인식 (첫 번째 소계 컬럼만)
+                # 🔹 '소계'만 있어도 공급금액 소계로 인식 (첫 번째 소계 컬럼만)
                 elif "소계" in hdr and "공급금액 소계" not in col_map:
                     col_map["공급금액 소계"] = c
 
@@ -892,10 +892,8 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
                 results.append(rec)
 
-            if results:
-                return results
-
     return results
+
 
 
 # ============================
