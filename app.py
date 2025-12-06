@@ -680,11 +680,12 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
     - 주택형
     - 약식표기
     - 주거 전용면적
+    - 주택공급면적 소계
     - 총 공급 세대수
     - 특별공급 세대수(기관추천+다자녀+신혼부부+노부모부양+생애최초 합산)
     - 일반공급 세대수
     를 추출한다.
-    → 여러 페이지/여러 표에 걸쳐 있어도 전부 누적.
+    여러 페이지/여러 표를 전부 누적.
     """
     results: List[Dict[str, str]] = []
 
@@ -722,6 +723,9 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                     col_map["약식표기"] = c
                 elif "주거전용면적" in hdr or ("전용" in hdr and "면적" in hdr):
                     col_map["주거 전용면적"] = c
+                # 🔹 주택공급면적 소계
+                elif "소계" in hdr and ("주택공급" in hdr or "공급면적" in hdr or "주택공급면적" in hdr):
+                    col_map["주택공급면적 소계"] = c
                 elif ("총공급" in hdr and "세대수" in hdr) or "총공급세대수" in hdr:
                     col_map["총 공급 세대수"] = c
                 elif "일반공급" in hdr and "세대수" in hdr:
@@ -758,6 +762,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 rec["주택형"] = get_val("주택형")
                 rec["약식표기"] = get_val("약식표기")
                 rec["주거 전용면적"] = get_val("주거 전용면적")
+                rec["주택공급면적 소계"] = get_val("주택공급면적 소계")
                 rec["총 공급 세대수"] = get_val("총 공급 세대수")
                 rec["일반공급 세대수"] = get_val("일반공급 세대수")
 
@@ -781,6 +786,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
@@ -810,7 +816,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             df = pd.DataFrame(table).fillna("")
             header_idx = None
 
-            # 헤더 행 찾기
+            # 1차: '공급금액표' 또는 '공급금액' 관련 문구가 있는 행
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
                 row_txt_ns = row_txt.replace(" ", "")
@@ -821,6 +827,20 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 ):
                     header_idx = i
                     break
+
+            # 2차: 위가 없으면, '주택형+동/호+층구분(or 층)+해당세대수'가 같이 있는 행을 헤더로 본다
+            if header_idx is None:
+                for i, row in df.iterrows():
+                    row_txt = "".join(str(x) for x in row.tolist())
+                    row_txt_ns = row_txt.replace(" ", "")
+                    if (
+                        "주택형" in row_txt_ns
+                        and ("동" in row_txt_ns and "호" in row_txt_ns)
+                        and ("층구분" in row_txt_ns or "층" in row_txt_ns)
+                        and ("해당세대수" in row_txt_ns or "해당세대" in row_txt_ns)
+                    ):
+                        header_idx = i
+                        break
 
             if header_idx is None:
                 continue
@@ -893,6 +913,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
