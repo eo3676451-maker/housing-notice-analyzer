@@ -731,7 +731,7 @@ def extract_supply_target_from_tables(pdf) -> List[Dict[str, str]]:
 
 
 # ============================
-#  공급금액표 추출 (동·호·층별, 숫자 기반 공급금액 열 자동 탐지)
+#  공급금액표 추출 (동·호·층별, 최종 정리본)
 # ============================
 def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     """
@@ -744,12 +744,14 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     - 공급금액 소계
     를 추출한다.
 
-    핵심 아이디어
-    1) 옵션/확장비 표는 텍스트로 거른다.
-    2) 6페이지(헤더 있는 표)에서만 헤더를 분석해서 col_map을 만든다.
-    3) 공급금액 열은 헤더 텍스트가 아니라, 각 열에 등장하는 숫자 길이/개수를 보고
-       "7자리 이상 금액이 많이 나오는 열들 중 가장 오른쪽"을 선택한다.
-    4) 7~9페이지는 헤더가 없으므로, 직전 col_map(헤더 테이블)의 위치를 그대로 사용한다.
+    핵심 로직
+    1) 옵션/확장비 표는 텍스트로 통째로 제외
+    2) '주택형 + 약식표기'가 있는 표를 헤더 표로 인식하고 col_map 생성
+    3) 공급금액 열은
+       - (1순위) 헤더에 '소계/합계/총액' 이 있고
+       - 해당 열에 7자리 이상 숫자가 많이 나오는 열
+       - (2순위) 그런 게 없으면, 7자리 이상 숫자가 많이 나오는 열들 중 가장 오른쪽
+    4) 이후 나오는 헤더 없는 표는 직전 col_map 을 그대로 사용
     """
 
     results: List[Dict[str, str]] = []
@@ -767,18 +769,25 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
         t = str(s).replace(" ", "")
         return "층" in t and "동" not in t and "호" not in t
 
-    def detect_price_col_by_numbers(df2: pd.DataFrame) -> int | None:
+    def detect_price_col(df2: pd.DataFrame) -> int | None:
         """
         df2: 헤더 포함된 테이블 (0행 = 헤더)
         각 열별로 숫자 패턴을 보고 '금액 열' 후보를 찾는다.
         - 숫자가 3건 이상 나오고
-        - 숫자 자리수의 중앙값이 7자리 이상이면 '금액 열'로 간주
-        여러 개면 가장 오른쪽 열을 선택
+        - 숫자 자리수의 중앙값이 7자리 이상이면 '금액 열' 후보
+        - 먼저 헤더에 '소계/합계/총액' 이 있는 열 중에서 선택
+        - 그런 게 하나도 없으면, 모든 후보 중 가장 오른쪽 열
         """
         ncols = df2.shape[1]
-        candidate_cols: List[int] = []
+        candidates: List[int] = []
+        candidates_with_soegye: List[int] = []
 
         for c in range(ncols):
+            # 헤더 텍스트
+            hdr = "".join(df2.iloc[0:3, c].astype(str).tolist())
+            hdr_clean = hdr.replace(" ", "").replace("\n", "")
+
+            # 숫자 수집
             nums: List[int] = []
             for r in range(1, df2.shape[0]):  # 0행은 헤더
                 val = str(df2.iloc[r, c]).strip()
@@ -794,16 +803,21 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             if len(nums) < 3:
                 continue
 
-            # 자리수 중앙값 계산
             lens = sorted(len(str(x)) for x in nums)
             med_len = lens[len(lens) // 2]
 
-            if med_len >= 7:  # 최소 1,000만 이상으로 가정
-                candidate_cols.append(c)
+            if med_len >= 7:  # 최소 1,000만 이상
+                candidates.append(c)
+                if any(k in hdr_clean for k in ["소계", "합계", "총액"]):
+                    candidates_with_soegye.append(c)
 
-        if not candidate_cols:
-            return None
-        return max(candidate_cols)  # 가장 오른쪽 열
+        # 1순위: '소계/합계/총액'이 붙어 있는 열들 중 가장 오른쪽
+        if candidates_with_soegye:
+            return max(candidates_with_soegye)
+        # 2순위: 그냥 금액처럼 보이는 열들 중 가장 오른쪽
+        if candidates:
+            return max(candidates)
+        return None
 
     for page_idx, page in enumerate(pdf.pages):
         tables = page.extract_tables() or []
@@ -831,7 +845,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             col_map: Dict[str, int] = {}
 
             if header_idx is not None:
-                # 6페이지처럼 헤더가 있는 정식 표
+                # 헤더가 있는 '정식 공급금액표'
                 df2 = df.iloc[header_idx:].reset_index(drop=True)
                 ncols = df2.shape[1]
 
@@ -850,10 +864,9 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     elif "해당세대" in h:
                         col_map["해당세대수"] = c
 
-                # 🔎 헤더 텍스트와 무관하게, 숫자 패턴으로 공급금액 열 찾기
-                price_idx = detect_price_col_by_numbers(df2)
+                price_idx = detect_price_col(df2)
                 if price_idx is None:
-                    # 금액 열을 못 찾으면 이 표는 스킵
+                    # 금액 열을 못 찾으면 이 표는 공급금액표가 아니다
                     last_col_map = None
                     last_ncols = None
                     continue
@@ -865,7 +878,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
             else:
                 # --------------------------
-                # B. 헤더 없는 이어지는 표 (7~9페이지 등)
+                # B. 헤더 없는 이어지는 표
                 # --------------------------
                 if not last_col_map:
                     continue
@@ -874,7 +887,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 ncols = df2.shape[1]
                 col_map = last_col_map.copy()
 
-                # 6페이지보다 열이 1개 적으면 → "동/호별" 열이 빠졌다고 보고 보정
+                # 직전 표보다 열이 1개 적으면 → "동/호별" 열이 빠졌다고 보고 보정
                 if last_ncols is not None and ncols == last_ncols - 1 and "동/호별" in col_map:
                     removed_idx = col_map["동/호별"]
                     col_map.pop("동/호별")
@@ -961,6 +974,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 # ============================
 # Streamlit UI
