@@ -949,7 +949,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
 
 # ============================
-#  공급금액표 추출 (동·호·층별, 전체 타입 / pdfplumber-only)
+#  공급금액표 추출 (동·호·층별, 숫자 기반 공급금액 열 자동 탐지)
 # ============================
 def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     """
@@ -962,11 +962,12 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     - 공급금액 소계
     를 추출한다.
 
-    특징
-    1) 옵션/확장비 표는 전부 제외
-    2) 6페이지 헤더 + 7~9페이지 본문처럼, 헤더 없는 표는 직전 헤더(col_map)를 재사용
-    3) 세대수는 3자리 이하 숫자(1~999)만 인정
-    4) 공급금액은 1천만 이상(숫자 7자리 이상)만 인정
+    핵심 아이디어
+    1) 옵션/확장비 표는 텍스트로 거른다.
+    2) 6페이지(헤더 있는 표)에서만 헤더를 분석해서 col_map을 만든다.
+    3) 공급금액 열은 헤더 텍스트가 아니라, 각 열에 등장하는 숫자 길이/개수를 보고
+       "7자리 이상 금액이 많이 나오는 열들 중 가장 오른쪽"을 선택한다.
+    4) 7~9페이지는 헤더가 없으므로, 직전 col_map(헤더 테이블)의 위치를 그대로 사용한다.
     """
 
     results: List[Dict[str, str]] = []
@@ -983,6 +984,44 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             return False
         t = str(s).replace(" ", "")
         return "층" in t and "동" not in t and "호" not in t
+
+    def detect_price_col_by_numbers(df2: pd.DataFrame) -> int | None:
+        """
+        df2: 헤더 포함된 테이블 (0행 = 헤더)
+        각 열별로 숫자 패턴을 보고 '금액 열' 후보를 찾는다.
+        - 숫자가 3건 이상 나오고
+        - 숫자 자리수의 중앙값이 7자리 이상이면 '금액 열'로 간주
+        여러 개면 가장 오른쪽 열을 선택
+        """
+        ncols = df2.shape[1]
+        candidate_cols: List[int] = []
+
+        for c in range(ncols):
+            nums: List[int] = []
+            for r in range(1, df2.shape[0]):  # 0행은 헤더
+                val = str(df2.iloc[r, c]).strip()
+                digits = re.sub(r"[^0-9]", "", val)
+                if not digits:
+                    continue
+                try:
+                    num = int(digits)
+                except ValueError:
+                    continue
+                nums.append(num)
+
+            if len(nums) < 3:
+                continue
+
+            # 자리수 중앙값 계산
+            lens = sorted(len(str(x)) for x in nums)
+            med_len = lens[len(lens) // 2]
+
+            if med_len >= 7:  # 최소 1,000만 이상으로 가정
+                candidate_cols.append(c)
+
+        if not candidate_cols:
+            return None
+        return max(candidate_cols)  # 가장 오른쪽 열
 
     for page_idx, page in enumerate(pdf.pages):
         tables = page.extract_tables() or []
@@ -1014,12 +1053,9 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 df2 = df.iloc[header_idx:].reset_index(drop=True)
                 ncols = df2.shape[1]
 
-                header_texts: List[str] = []
-
                 for c in range(ncols):
                     hdr = "".join(df2.iloc[0:4, c].astype(str).tolist())
                     h = hdr.replace(" ", "").replace("\n", "")
-                    header_texts.append(h)
 
                     if "주택형" in h:
                         col_map["주택형"] = c
@@ -1032,24 +1068,10 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     elif "해당세대" in h:
                         col_map["해당세대수"] = c
 
-                # ---- 공급금액 소계 열 결정 ----
-                price_idx: int | None = None
-
-                # (1) '공급금액/분양금액/분양가격' + '소계' 같이 들어간 열이 있으면 그걸 사용
-                for c, h in enumerate(header_texts):
-                    if "소계" in h and (
-                        "공급금액" in h or "분양금액" in h or "분양가격" in h
-                    ):
-                        price_idx = c
-
-                # (2) 그런 열이 없으면, '소계'가 들어간 열 중 **가장 오른쪽**을 사용
+                # 🔎 헤더 텍스트와 무관하게, 숫자 패턴으로 공급금액 열 찾기
+                price_idx = detect_price_col_by_numbers(df2)
                 if price_idx is None:
-                    candidates = [c for c, h in enumerate(header_texts) if "소계" in h]
-                    if candidates:
-                        price_idx = max(candidates)
-
-                if price_idx is None:
-                    # 공급금액 열을 못 찾았으면 이 표는 스킵
+                    # 금액 열을 못 찾으면 이 표는 스킵
                     last_col_map = None
                     last_ncols = None
                     continue
@@ -1157,9 +1179,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
-
-
-
 
 # ============================
 # Streamlit UI
