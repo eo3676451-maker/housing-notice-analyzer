@@ -753,7 +753,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
     results: List[Dict[str, str]] = []
 
-    # 첫 "헤더 있는 공급금액표"에서 매핑 기억
+    # 이전에 성공적으로 파싱한 "완전한 헤더" 테이블의 컬럼 매핑을 저장
     last_col_map: Dict[str, int] | None = None
     current_type = ""
     current_abbr = ""
@@ -771,9 +771,29 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             if any(k in all_txt for k in ["옵션", "선택품목", "선택사양"]):
                 continue
 
-            # -------------------------------
-            # ① 먼저 헤더(주택형 + 약식표기) 있는지 확인
-            # -------------------------------
+            # 2) 공급금액표 후보 필터
+            has_price = ("공급금액" in all_txt and "소계" in all_txt)
+            has_dongho = ("동" in all_txt and "호" in all_txt) or "동/호" in all_txt
+            has_floor = "층구분" in all_txt or ("층" in all_txt and "구분" in all_txt)
+            has_haedang = "해당세대" in all_txt
+
+            # 🔴 기존 코드는 아래처럼 되어 있어서
+            #  - has_price == False 인 표(7~9페이지)는 바로 continue 됐음
+            # if not has_price or not (has_dongho or has_floor or has_haedang):
+            #     continue
+
+            # ✅ 수정: 헤더가 없어도(last_col_map 존재) 이어지는 표는 받아들인다
+            if not has_price and not last_col_map:
+                # 아직 헤더도 못 찾았고, 공급금액 글자도 없으면 가격표가 아님
+                continue
+
+            # 동/층/해당세대 정보가 전혀 없으면 그냥 숫자 요약표일 확률이 크니 제외
+            if not (has_dongho or has_floor or has_haedang):
+                continue
+
+            # ---------------------------------------------------
+            # A. '주택형 + 약식표기'가 같이 있는 표 (완전한 헤더) 인지 확인
+            # ---------------------------------------------------
             header_idx = None
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
@@ -787,7 +807,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             col_map: Dict[str, int] = {}
 
             if header_idx is not None:
-                # ✅ A. 6페이지 같은 "기준 헤더 표"
+                # ✅ "완전한 헤더" 테이블 (예: 6페이지)
                 df2 = df.iloc[header_idx:].reset_index(drop=True)
                 ncols = df2.shape[1]
 
@@ -807,74 +827,108 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         col_map["해당세대수"] = c
                     elif "공급금액" in hdr and "소계" in hdr:
                         col_map["공급금액 소계"] = c
-                    elif "소계" in hdr and "공급금액 소계" not in col_map:
+                    elif "소계" in hdr and "공급금액소계" not in col_map:
                         col_map["공급금액 소계"] = c
 
-                # 최소한 금액/층/세대 중 하나는 있어야 공급금액표로 인정
                 if not col_map.get("공급금액 소계"):
-                    continue
-                if not (col_map.get("층구분") or col_map.get("동/호별") or col_map.get("해당세대수")):
+                    # 공급금액 위치를 못 찾으면 이 표는 스킵
                     continue
 
+                # 이후에 나오는 "헤더 없는 이어지는 표"가 쓸 수 있도록 저장
                 last_col_map = col_map.copy()
 
             else:
-                # ✅ B. 헤더 없는 "이어지는 표"(7~9페이지)
+                # ---------------------------------------------------
+                # B. '헤더 없는 이어지는 표' (ex. 7~9페이지)
+                #    → 직전에 본 col_map(완전한 헤더)을 재사용
+                # ---------------------------------------------------
                 if not last_col_map:
-                    # 아직 기준이 없다면 이 표는 공급금액표가 아님
+                    # 아직 기준 헤더를 본 적이 없으면 건너뜀
                     continue
 
-                # 열 개수는 달라도 일단 last_col_map 기준으로 시도
                 df2 = df.reset_index(drop=True)
+                ncols = df2.shape[1]
+
+                # 기본적으로는 이전 col_map을 복사해서 쓰고,
+                # 현재 표의 1~3줄을 보면서 동/호/층/세대/소계 위치만 다시 맞춰본다.
                 col_map = last_col_map.copy()
 
-            # -------------------------------
-            # ② 데이터 행 파싱
-            # -------------------------------
-            def get_val(row, idx: int | None) -> str:
-                if idx is None or idx >= len(row):
-                    return ""
-                return str(row.iloc[idx]).strip()
+                tmp_map: Dict[str, int] = {}
+                for c in range(ncols):
+                    hdr = "".join(df2.iloc[0:3, c].astype(str).tolist())
+                    hdr = hdr.replace(" ", "").replace("\n", "")
 
-            for r in range(1, df2.shape[0]):
+                    if ("동" in hdr and "호" in hdr) or "동/호" in hdr:
+                        tmp_map["동/호별"] = c
+                    elif "층구분" in hdr or ("층" in hdr and "구분" in hdr):
+                        tmp_map["층구분"] = c
+                    elif "해당세대수" in hdr or "해당세대" in hdr:
+                        tmp_map["해당세대수"] = c
+                    elif "공급금액" in hdr and "소계" in hdr:
+                        tmp_map["공급금액 소계"] = c
+
+                col_map.update(tmp_map)
+
+                # 그래도 핵심 컬럼이 하나도 안 잡히면 이 표는 포기
+                if not (col_map.get("동/호별") or col_map.get("층구분") or col_map.get("해당세대수")):
+                    continue
+                if not col_map.get("공급금액 소계"):
+                    continue
+
+            # ---------------------------------------------------
+            # 데이터 행 파싱
+            # ---------------------------------------------------
+            start_row = 1 if header_idx is not None else 0
+
+            for r in range(start_row, df2.shape[0]):
                 row = df2.iloc[r]
                 row_txt = "".join(str(x) for x in row.tolist())
 
                 # 중간에 또 나오는 헤더 / 합계 행은 스킵
                 if "주택형" in row_txt and ("약식표기" in row_txt or "약식" in row_txt):
                     continue
-                if "합계" in row_txt or "전 타입" in row_txt or "부분" in row_txt:
+                if "합계" in row_txt:
                     continue
+
+                def get_val(idx: int | None) -> str:
+                    if idx is None or idx >= len(row):
+                        return ""
+                    return str(row.iloc[idx]).strip()
 
                 # 주택형 / 약식표기 → forward-fill
                 idx_type = col_map.get("주택형")
                 if idx_type is not None:
-                    v = get_val(row, idx_type)
+                    v = get_val(idx_type)
                     if v:
                         current_type = v
 
                 idx_abbr = col_map.get("약식표기")
                 if idx_abbr is not None:
-                    v = get_val(row, idx_abbr)
+                    v = get_val(idx_abbr)
                     if v:
                         current_abbr = v
 
                 rec: Dict[str, str] = {
                     "주택형": current_type,
                     "약식표기": current_abbr,
-                    "동/호별": get_val(row, col_map.get("동/호별")),
-                    "층구분": get_val(row, col_map.get("층구분")),
-                    "해당세대수": get_val(row, col_map.get("해당세대수")),
-                    "공급금액 소계": get_val(row, col_map.get("공급금액 소계")),
+                    "동/호별": get_val(col_map.get("동/호별")),
+                    "층구분": get_val(col_map.get("층구분")),
+                    "해당세대수": get_val(col_map.get("해당세대수")),
+                    "공급금액 소계": get_val(col_map.get("공급금액 소계")),
                 }
+
+                # 🔹 진짜 공급금액 행만 남기기 위한 필터들 🔹
 
                 # 1) 동/호, 층, 해당세대수 셋 다 비어 있으면 요약행으로 보고 제거
                 if not (rec["동/호별"] or rec["층구분"] or rec["해당세대수"]):
                     continue
 
                 # 2) 공급금액 소계가 너무 작은 숫자(면적 등)면 제거
+                #    → 100,000,000 정도면 9자리. 6자리 이하(999,999 이하)는 면적일 가능성이 큼.
                 amt_digits = re.sub(r"[^0-9]", "", rec["공급금액 소계"] or "")
-                if amt_digits and len(amt_digits) <= 6:
+                if not amt_digits:
+                    continue
+                if len(amt_digits) <= 6:
                     continue
 
                 # 3) 타입 정보가 전혀 없으면 (진짜로 이상한 행) 제거
@@ -884,6 +938,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
