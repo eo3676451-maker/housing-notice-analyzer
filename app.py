@@ -753,10 +753,8 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
     results: List[Dict[str, str]] = []
 
-    # 6페이지 같은 "완전 헤더"에서 쓴 매핑과 컬럼 개수 기억
+    # 첫 "헤더 있는 공급금액표"에서 매핑 기억
     last_col_map: Dict[str, int] | None = None
-    last_ncols: int | None = None
-
     current_type = ""
     current_abbr = ""
 
@@ -774,7 +772,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 continue
 
             # -------------------------------
-            # ① 먼저 헤더(주택형 + 약식표기) 있는지부터 확인
+            # ① 먼저 헤더(주택형 + 약식표기) 있는지 확인
             # -------------------------------
             header_idx = None
             for i, row in df.iterrows():
@@ -810,7 +808,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     elif "공급금액" in hdr and "소계" in hdr:
                         col_map["공급금액 소계"] = c
                     elif "소계" in hdr and "공급금액 소계" not in col_map:
-                        # "공급금액 소계"가 칸이 나뉘어 있는 경우 대비
                         col_map["공급금액 소계"] = c
 
                 # 최소한 금액/층/세대 중 하나는 있어야 공급금액표로 인정
@@ -819,31 +816,17 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 if not (col_map.get("층구분") or col_map.get("동/호별") or col_map.get("해당세대수")):
                     continue
 
-                # 이후 이어지는 표에서 재사용할 기준 매핑 저장
                 last_col_map = col_map.copy()
-                last_ncols = ncols
 
             else:
-                # ✅ B. 헤더가 없는 "이어지는 표"(7~9페이지)
+                # ✅ B. 헤더 없는 "이어지는 표"(7~9페이지)
                 if not last_col_map:
                     # 아직 기준이 없다면 이 표는 공급금액표가 아님
                     continue
 
+                # 열 개수는 달라도 일단 last_col_map 기준으로 시도
                 df2 = df.reset_index(drop=True)
-                ncols = df2.shape[1]
                 col_map = last_col_map.copy()
-
-                if last_ncols is not None:
-                    # 6페이지보다 열이 1개 적으면 → "동/호별" 열이 빠진 경우로 간주
-                    if ncols == last_ncols - 1 and "동/호별" in col_map:
-                        removed_idx = col_map["동/호별"]
-                        col_map.pop("동/호별")
-                        for k, v in list(col_map.items()):
-                            if v > removed_idx:
-                                col_map[k] = v - 1
-                    # 열 개수가 너무 다르면 구조가 완전히 다르다고 보고 스킵
-                    elif ncols != last_ncols:
-                        continue
 
             # -------------------------------
             # ② 데이터 행 파싱
@@ -901,6 +884,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
