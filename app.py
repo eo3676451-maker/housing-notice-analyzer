@@ -1100,10 +1100,10 @@ if uploaded:
 
     uploaded.seek(0)
     with pdfplumber.open(uploaded) as pdf:
-    schedule = extract_schedule_from_table(pdf)
-    table_company = extract_company_from_table(pdf, text)
-    supply_rows = extract_supply_target_from_tables(pdf)
-    price_rows = extract_price_table_from_tables(pdf)
+        schedule = extract_schedule_from_table(pdf)
+        table_company = extract_company_from_table(pdf, text)
+        supply_rows = extract_supply_target_from_tables(pdf)
+        price_rows = extract_price_table_from_tables(pdf)
 
 
     core = extract_core_info(text)
