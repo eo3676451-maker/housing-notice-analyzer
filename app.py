@@ -16,6 +16,38 @@ import pandas as pd
 from typing import Dict, List, Tuple
 from collections import defaultdict
 
+# app.py 파일 수정 (전체 코드를 다음과 같은 구조로 변경)
+
+# --- (다른 모든 import 문들) ---
+from app_BU import extract_schedule_from_table, extract_company_from_table, extract_supply_target_from_tables 
+# --------------------------------
+
+def main():
+    # 1340번째 줄 근처의 모든 UI 및 실행 코드를 이 함수 안으로 이동합니다.
+    st.set_page_config(page_title="입주자모집공고 분석기", layout="wide")
+    
+    # ------------------
+    # 메인 UI 정의 (중복되는 부분)
+    # ------------------
+    st.sidebar.title("📄 PDF 업로드")
+    uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"], key="pdf_uploader_1")
+    
+    st.title("🏢 입주자모집공고 분석기 (자동 분석)") # 이 타이틀이 두 번 출력되는 부분입니다.
+    # ------------------
+    
+    if uploaded:
+        # 파일이 업로드 되었을 때 실행되는 나머지 모든 분석 로직 (1349줄 이하)
+        uploaded.seek(0)
+        with pdfplumber.open(uploaded) as pdf:
+            schedule = extract_schedule_from_table(pdf)
+            # ... 나머지 분석 코드 ...
+
+# ---------------------------------------------
+# 이 코드가 가장 중요합니다!
+# ---------------------------------------------
+if __name__ == '__main__':
+    main()
+
 # ============================
 #  공통 유틸
 # ============================
