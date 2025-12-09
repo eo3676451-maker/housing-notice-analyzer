@@ -753,7 +753,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
     results: List[Dict[str, str]] = []
 
-    # 이전에 성공적으로 파싱한 "완전한 헤더" 테이블의 컬럼 매핑을 저장
+    # 이전에 성공적으로 파싱한 "완전한 헤더" 테이블의 컬럼 매핑
     last_col_map: Dict[str, int] | None = None
     current_type = ""
     current_abbr = ""
@@ -777,22 +777,16 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             has_floor = "층구분" in all_txt or ("층" in all_txt and "구분" in all_txt)
             has_haedang = "해당세대" in all_txt
 
-            # 🔴 기존 코드는 아래처럼 되어 있어서
-            #  - has_price == False 인 표(7~9페이지)는 바로 continue 됐음
-            # if not has_price or not (has_dongho or has_floor or has_haedang):
-            #     continue
-
-            # ✅ 수정: 헤더가 없어도(last_col_map 존재) 이어지는 표는 받아들인다
+            # 헤더(공급금액 소계)가 한 번도 안 나온 상태에서 has_price=False 면 스킵
             if not has_price and not last_col_map:
-                # 아직 헤더도 못 찾았고, 공급금액 글자도 없으면 가격표가 아님
                 continue
 
-            # 동/층/해당세대 정보가 전혀 없으면 그냥 숫자 요약표일 확률이 크니 제외
+            # 동/층/해당세대 관련 단서가 전혀 없으면 그냥 요약표일 가능성이 큼
             if not (has_dongho or has_floor or has_haedang):
                 continue
 
             # ---------------------------------------------------
-            # A. '주택형 + 약식표기'가 같이 있는 표 (완전한 헤더) 인지 확인
+            # A. '주택형 + 약식표기'가 같이 있는 표 (완전한 헤더)
             # ---------------------------------------------------
             header_idx = None
             for i, row in df.iterrows():
@@ -827,20 +821,21 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         col_map["해당세대수"] = c
                     elif "공급금액" in hdr and "소계" in hdr:
                         col_map["공급금액 소계"] = c
-                    elif "소계" in hdr and "공급금액소계" not in col_map:
+                    elif "소계" in hdr and "공급금액 소계" not in col_map:
                         col_map["공급금액 소계"] = c
 
                 if not col_map.get("공급금액 소계"):
                     # 공급금액 위치를 못 찾으면 이 표는 스킵
                     continue
 
-                # 이후에 나오는 "헤더 없는 이어지는 표"가 쓸 수 있도록 저장
+                # 이후 이어지는 표에서 재사용할 기준
                 last_col_map = col_map.copy()
 
             else:
                 # ---------------------------------------------------
                 # B. '헤더 없는 이어지는 표' (ex. 7~9페이지)
                 #    → 직전에 본 col_map(완전한 헤더)을 재사용
+                #    → 7페이지처럼 머리글 행이 애매한 경우를 위해 0~4행까지 폭넓게 스캔
                 # ---------------------------------------------------
                 if not last_col_map:
                     # 아직 기준 헤더를 본 적이 없으면 건너뜀
@@ -849,13 +844,17 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 df2 = df.reset_index(drop=True)
                 ncols = df2.shape[1]
 
-                # 기본적으로는 이전 col_map을 복사해서 쓰고,
-                # 현재 표의 1~3줄을 보면서 동/호/층/세대/소계 위치만 다시 맞춰본다.
                 col_map = last_col_map.copy()
 
+                # 이어지는 표 상단(0~4행)에서 다시 한 번 동/층/세대/소계 위치를 보정
                 tmp_map: Dict[str, int] = {}
+                max_head_rows = min(5, df2.shape[0])
+
                 for c in range(ncols):
-                    hdr = "".join(df2.iloc[0:3, c].astype(str).tolist())
+                    pieces = []
+                    for r_head in range(max_head_rows):
+                        pieces.append(str(df2.iloc[r_head, c]))
+                    hdr = "".join(pieces)
                     hdr = hdr.replace(" ", "").replace("\n", "")
 
                     if ("동" in hdr and "호" in hdr) or "동/호" in hdr:
@@ -867,6 +866,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     elif "공급금액" in hdr and "소계" in hdr:
                         tmp_map["공급금액 소계"] = c
 
+                # 발견된 게 있으면 기준 맵 덮어쓰기
                 col_map.update(tmp_map)
 
                 # 그래도 핵심 컬럼이 하나도 안 잡히면 이 표는 포기
@@ -924,7 +924,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     continue
 
                 # 2) 공급금액 소계가 너무 작은 숫자(면적 등)면 제거
-                #    → 100,000,000 정도면 9자리. 6자리 이하(999,999 이하)는 면적일 가능성이 큼.
                 amt_digits = re.sub(r"[^0-9]", "", rec["공급금액 소계"] or "")
                 if not amt_digits:
                     continue
@@ -938,6 +937,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
