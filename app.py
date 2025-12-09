@@ -1342,7 +1342,7 @@ def extract_price_table_with_layout(uploaded) -> List[Dict[str, str]]:
 st.set_page_config(page_title="입주자모집공고 분석기", layout="wide")
 
 st.sidebar.title("📂 PDF 업로드")
-uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"])
+uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"], key="pdf_uploader_1")
 
 st.title("🏢 입주자모집공고 분석기 (자동 분석)")
 
