@@ -773,23 +773,9 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             if any(k in all_txt for k in ["옵션", "선택품목", "선택사양"]):
                 continue
 
-            # 2) 공급금액표 후보 필터
-            has_price = ("공급금액" in all_txt and "소계" in all_txt)
-            has_floor_or_house = (
-                "층구분" in all_txt
-                or ("층" in all_txt and "구분" in all_txt)
-                or "동/호" in all_txt
-                or ("동" in all_txt and "호" in all_txt)
-            )
-            has_haedang = "해당세대" in all_txt
-
-            if not has_price or not (has_floor_or_house or has_haedang):
-                # 동/호/층/해당세대 정보가 없으면 공급금액 "요약표"일 가능성이 큼
-                continue
-
-            # ---------------------------------------------------
-            # A. '주택형 + 약식표기'가 같이 있는 표 (완전한 헤더)
-            # ---------------------------------------------------
+            # -------------------------------
+            # ① 먼저 헤더(주택형 + 약식표기) 있는지부터 확인
+            # -------------------------------
             header_idx = None
             for i, row in df.iterrows():
                 row_txt = "".join(str(x) for x in row.tolist())
@@ -803,7 +789,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
             col_map: Dict[str, int] = {}
 
             if header_idx is not None:
-                # ✅ 6페이지 같은 "헤더 있는 표"
+                # ✅ A. 6페이지 같은 "기준 헤더 표"
                 df2 = df.iloc[header_idx:].reset_index(drop=True)
                 ncols = df2.shape[1]
 
@@ -823,11 +809,14 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         col_map["해당세대수"] = c
                     elif "공급금액" in hdr and "소계" in hdr:
                         col_map["공급금액 소계"] = c
-                    elif "소계" in hdr and "공급금액소계" not in col_map:
+                    elif "소계" in hdr and "공급금액 소계" not in col_map:
                         # "공급금액 소계"가 칸이 나뉘어 있는 경우 대비
                         col_map["공급금액 소계"] = c
 
+                # 최소한 금액/층/세대 중 하나는 있어야 공급금액표로 인정
                 if not col_map.get("공급금액 소계"):
+                    continue
+                if not (col_map.get("층구분") or col_map.get("동/호별") or col_map.get("해당세대수")):
                     continue
 
                 # 이후 이어지는 표에서 재사용할 기준 매핑 저장
@@ -835,36 +824,30 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 last_ncols = ncols
 
             else:
-                # ---------------------------------------------------
-                # B. '헤더 없는 이어지는 표' (7~9페이지)
-                #    → 직전에 본 완전 헤더(col_map)를 바탕으로 위치 보정
-                # ---------------------------------------------------
+                # ✅ B. 헤더가 없는 "이어지는 표"(7~9페이지)
                 if not last_col_map:
-                    # 아직 기준이 없으면 이 표는 건너뛴다
+                    # 아직 기준이 없다면 이 표는 공급금액표가 아님
                     continue
 
                 df2 = df.reset_index(drop=True)
                 ncols = df2.shape[1]
-
                 col_map = last_col_map.copy()
 
-                # 6페이지보다 열이 1개 적으면 → "동/호별" 열이 빠진 경우로 간주
-                if last_ncols is not None and ncols == last_ncols - 1 and "동/호별" in col_map:
-                    removed_idx = col_map["동/호별"]
-                    col_map.pop("동/호별")
+                if last_ncols is not None:
+                    # 6페이지보다 열이 1개 적으면 → "동/호별" 열이 빠진 경우로 간주
+                    if ncols == last_ncols - 1 and "동/호별" in col_map:
+                        removed_idx = col_map["동/호별"]
+                        col_map.pop("동/호별")
+                        for k, v in list(col_map.items()):
+                            if v > removed_idx:
+                                col_map[k] = v - 1
+                    # 열 개수가 너무 다르면 구조가 완전히 다르다고 보고 스킵
+                    elif ncols != last_ncols:
+                        continue
 
-                    # 동/호별 오른쪽에 있던 열들의 인덱스를 하나씩 당김
-                    for k, v in list(col_map.items()):
-                        if v > removed_idx:
-                            col_map[k] = v - 1
-
-                # 열 개수 차이가 너무 크면 구조가 다르다고 보고 스킵
-                elif last_ncols is not None and ncols != last_ncols:
-                    continue
-
-            # ---------------------------------------------------
-            # 데이터 행 파싱
-            # ---------------------------------------------------
+            # -------------------------------
+            # ② 데이터 행 파싱
+            # -------------------------------
             def get_val(row, idx: int | None) -> str:
                 if idx is None or idx >= len(row):
                     return ""
@@ -918,6 +901,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
