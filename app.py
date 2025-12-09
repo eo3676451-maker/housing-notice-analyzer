@@ -1,6 +1,6 @@
 # app.py 파일의 상단에 추가 (다른 import 문들 아래)
 
-from hs_app import extract_schedule_from_table, extract_company_from_table, extract_supply_target_from_tables
+from app.py import extract_schedule_from_table, extract_company_from_table, extract_supply_target_from_tables
 
 # 또는 필요한 함수만 따로 불러올 수도 있습니다:
 # from hs_app_BI import extract_company_from_table
