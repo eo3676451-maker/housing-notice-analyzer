@@ -1,12 +1,3 @@
-# app.py 파일의 상단에 추가 (다른 import 문들 아래)
-
-from app_BU import extract_schedule_from_table, extract_company_from_table, extract_supply_target_from_tables
-
-# 또는 필요한 함수만 따로 불러올 수도 있습니다:
-# from hs_app_BI import extract_company_from_table
-
-import fitz  # PyMuPDF
-import tempfile
 import streamlit as st
 import pdfplumber
 import re
@@ -15,38 +6,6 @@ from datetime import datetime
 import pandas as pd
 from typing import Dict, List, Tuple
 from collections import defaultdict
-
-# app.py 파일 수정 (전체 코드를 다음과 같은 구조로 변경)
-
-# --- (다른 모든 import 문들) ---
-from app_BU import extract_schedule_from_table, extract_company_from_table, extract_supply_target_from_tables 
-# --------------------------------
-
-def main():
-    # 1340번째 줄 근처의 모든 UI 및 실행 코드를 이 함수 안으로 이동합니다.
-    st.set_page_config(page_title="입주자모집공고 분석기", layout="wide")
-    
-    # ------------------
-    # 메인 UI 정의 (중복되는 부분)
-    # ------------------
-    st.sidebar.title("📄 PDF 업로드")
-    uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"], key="pdf_uploader_1")
-    
-    st.title("🏢 입주자모집공고 분석기 (자동 분석)") # 이 타이틀이 두 번 출력되는 부분입니다.
-    # ------------------
-    
-    if uploaded:
-        # 파일이 업로드 되었을 때 실행되는 나머지 모든 분석 로직 (1349줄 이하)
-        uploaded.seek(0)
-        with pdfplumber.open(uploaded) as pdf:
-            schedule = extract_schedule_from_table(pdf)
-            # ... 나머지 분석 코드 ...
-
-# ---------------------------------------------
-# 이 코드가 가장 중요합니다!
-# ---------------------------------------------
-if __name__ == '__main__':
-    main()
 
 # ============================
 #  공통 유틸
@@ -1160,213 +1119,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     final_rows = list(dedup.values())
     return final_rows
 
-def extract_price_table_with_layout(uploaded) -> List[Dict[str, str]]:
-    """
-    PyMuPDF(레이아웃 기반)으로 공급금액표(동·호·층별)를 추출한다.
-    - 주택형
-    - 약식표기
-    - 동/호별
-    - 층구분
-    - 해당세대수
-    - 공급금액 소계
-    """
-
-    # 1) 업로드된 PDF를 임시 파일로 저장
-    uploaded.seek(0)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded.read())
-        tmp_path = tmp.name
-
-    doc = fitz.open(tmp_path)
-
-    results: List[Dict[str, str]] = []
-
-    # 컬럼별 x센터 좌표 (헤더에서 한 번 잡으면 이후 페이지에서도 재사용)
-    col_centers: Dict[str, float] = {}
-    header_y: float | None = None
-
-    # forward-fill용 상태
-    current_type = ""
-    current_abbr = ""
-    current_dongho = ""
-
-    # y값 기준으로 행 묶는 헬퍼
-    def group_by_y(words, tol=2.0):
-        """[(x,y,text), ...] -> [(y_center, [words...]), ...]"""
-        words_sorted = sorted(words, key=lambda w: w["y"])
-        rows = []
-        cur = []
-        last_y = None
-        for w in words_sorted:
-            if last_y is None or abs(w["y"] - last_y) <= tol:
-                cur.append(w)
-                last_y = w["y"] if last_y is None else (last_y + w["y"]) / 2
-            else:
-                rows.append((last_y, cur))
-                cur = [w]
-                last_y = w["y"]
-        if cur:
-            rows.append((last_y, cur))
-        return rows
-
-    def is_floor_like(s: str) -> bool:
-        if not s:
-            return False
-        t = s.replace(" ", "")
-        return "층" in t and not ("동" in t or "호" in t)
-
-    for page in doc:
-        page_text = page.get_text()
-        # 공급금액표가 없는 페이지는 스킵
-        if "공급금액" not in page_text or "소계" not in page_text:
-            continue
-
-        # PyMuPDF words: [x0, y0, x1, y1, text, block_no, line_no, word_no]
-        raw_words = page.get_text("words") or []
-        words = [
-            {
-                "x": (w[0] + w[2]) / 2.0,
-                "y": (w[1] + w[3]) / 2.0,
-                "text": str(w[4]).strip(),
-            }
-            for w in raw_words
-            if str(w[4]).strip()
-        ]
-
-        if not words:
-            continue
-
-        rows = group_by_y(words, tol=2.0)
-
-        # ---- 1) 헤더 행 찾기 (있으면 컬럼 위치 갱신) ----
-        header_found_here = False
-        for y_center, row_words in rows:
-            row_text = "".join(w["text"] for w in row_words)
-            if "주택형" in row_text and ("약식표기" in row_text or "약식" in row_text):
-                header_found_here = True
-                header_y = y_center
-
-                # 새로 col_centers 설정
-                new_centers: Dict[str, float] = {}
-                for w in row_words:
-                    t = w["text"].replace(" ", "")
-                    x = w["x"]
-                    if "주택형" in t:
-                        new_centers["주택형"] = x
-                    elif "약식" in t:
-                        new_centers["약식표기"] = x
-                    elif "동" in t and "호" in t:
-                        new_centers["동/호별"] = x
-                    elif "층구분" in t or ("층" in t and "구분" in t):
-                        new_centers["층구분"] = x
-                    elif "해당세대" in t:
-                        new_centers["해당세대수"] = x
-                    elif "공급금액" in t and "소계" in t:
-                        new_centers["공급금액 소계"] = x
-
-                # 공급금액 소계 못 찾으면 가장 오른쪽에 있는 헤더를 가격으로 사용
-                if "공급금액 소계" not in new_centers:
-                    right_word = max(row_words, key=lambda w: w["x"])
-                    new_centers["공급금액 소계"] = right_word["x"]
-
-                col_centers = new_centers
-                break
-
-        # 이 페이지에 헤더가 없고, 이전에도 col_centers를 못 잡았으면 스킵
-        if not col_centers:
-            continue
-
-        # ---- 2) 실제 데이터 행 처리 ----
-        # header_y 기준으로 그 아래만 데이터 행으로 봄
-        data_rows = []
-        for y_center, row_words in rows:
-            if header_y is not None and y_center <= header_y + 1:
-                continue
-            data_rows.append((y_center, row_words))
-
-        for y_center, row_words in data_rows:
-            row_text = "".join(w["text"] for w in row_words)
-
-            # 옵션표/합계/전타입 등은 스킵
-            if any(k in row_text for k in ["합계", "전타입", "부분", "옵션", "선택품목", "선택사양"]):
-                continue
-
-            # 이 행에서 특정 컬럼(x센터)에 가장 가까운 단어 찾아주는 헬퍼
-            def pick_nearest(col_name: str) -> str:
-                if col_name not in col_centers:
-                    return ""
-                cx = col_centers[col_name]
-                best = None
-                best_diff = None
-                for w in row_words:
-                    diff = abs(w["x"] - cx)
-                    # 너무 떨어진 건 같은 열이 아니라고 판단 (50pt 정도 기준)
-                    if diff > 50:
-                        continue
-                    if best is None or diff < best_diff:
-                        best = w
-                        best_diff = diff
-                return best["text"] if best is not None else ""
-
-            v_type = pick_nearest("주택형")
-            v_abbr = pick_nearest("약식표기")
-            v_dongho = pick_nearest("동/호별")
-            v_floor = pick_nearest("층구분")
-            v_haedang = pick_nearest("해당세대수")
-            v_price = pick_nearest("공급금액 소계")
-
-            # forward-fill
-            if v_type:
-                current_type = v_type
-            if v_abbr:
-                current_abbr = v_abbr
-            if v_dongho:
-                current_dongho = v_dongho
-
-            # 동/호 대신 층이 들어왔으면 보정
-            if is_floor_like(v_dongho) and not is_floor_like(v_floor):
-                v_floor = v_dongho
-                v_dongho = current_dongho
-
-            # 층표시에 '층' 글자 없으면 붙여주기
-            if v_floor:
-                fv = v_floor.replace(" ", "")
-                if "층" not in fv and re.search(r"\d", fv):
-                    v_floor = fv + "층"
-
-            # 세대수: 4자리(1000세대) 이상이면 금액으로 보고 제거
-            if v_haedang:
-                digits = re.sub(r"[^0-9]", "", v_haedang)
-                if digits and len(digits) > 3:
-                    v_haedang = ""
-
-            # 공급금액: 너무 작은 금액(<= 1,000,000)은 면적/수수료로 보고 무시
-            if v_price:
-                p_digits = re.sub(r"[^0-9]", "", v_price)
-                if not p_digits or int(p_digits) <= 1000000:
-                    v_price = ""
-
-            # 최소한의 정보 체크
-            if not (current_type or current_abbr):
-                continue
-            if not (current_dongho or v_floor or v_haedang):
-                continue
-            if not v_price:
-                # 가격이 비었으면 이 행은 버린다 (필요하면 나중에 보완)
-                continue
-
-            rec: Dict[str, str] = {
-                "주택형": current_type,
-                "약식표기": current_abbr,
-                "동/호별": current_dongho,
-                "층구분": v_floor,
-                "해당세대수": v_haedang,
-                "공급금액 소계": v_price,
-            }
-            results.append(rec)
-
-    return results
-
 
 # ============================
 # Streamlit UI
@@ -1374,29 +1126,25 @@ def extract_price_table_with_layout(uploaded) -> List[Dict[str, str]]:
 st.set_page_config(page_title="입주자모집공고 분석기", layout="wide")
 
 st.sidebar.title("📂 PDF 업로드")
-uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"], key="pdf_uploader_1")
+uploaded = st.sidebar.file_uploader("PDF 파일을 업로드하세요", type=["pdf"])
 
 st.title("🏢 입주자모집공고 분석기 (자동 분석)")
 
 if uploaded:
     uploaded.seek(0)
+    text = ""
+    with pdfplumber.open(uploaded) as pdf:
+        for p in pdf.pages:
+            text += (p.extract_text() or "") + "\n"
+
+    text = filter_irrelevant_sections(text)
+
+    uploaded.seek(0)
     with pdfplumber.open(uploaded) as pdf:
         schedule = extract_schedule_from_table(pdf)
         table_company = extract_company_from_table(pdf, text)
         supply_rows = extract_supply_target_from_tables(pdf)
-
-    # 🔽 공급금액표: PyMuPDF 레이아웃 엔진 우선, 안 되면 기존 pdfplumber 버전 사용
-    try:
-        price_rows = extract_price_table_with_layout(uploaded)
-        if not price_rows:
-            uploaded.seek(0)
-            with pdfplumber.open(uploaded) as pdf2:
-                price_rows = extract_price_table_from_tables(pdf2)
-    except Exception:
-        uploaded.seek(0)
-        with pdfplumber.open(uploaded) as pdf2:
-            price_rows = extract_price_table_from_tables(pdf2)
-
+        price_rows = extract_price_table_from_tables(pdf)
 
     core = extract_core_info(text)
     loan_cond = extract_loan_condition(text)
