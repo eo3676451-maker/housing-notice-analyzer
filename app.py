@@ -936,7 +936,9 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
                 results.append(rec)
 
-    return results# ============================
+    return results
+
+# ============================
 #  공급금액표 추출 (동·호·층별, 전체 타입)
 # ============================
 def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
@@ -1144,7 +1146,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
-
 
 
 # ============================
