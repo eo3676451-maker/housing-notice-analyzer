@@ -952,11 +952,12 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     - 공급금액 소계
     를 뽑아온다.
 
-    🔹 특징
-    1) 옵션표(선택옵션, 확장비 등)는 전부 제외
-    2) 1개 타입이 여러 페이지/여러 테이블로 끊어져 있어도 이어서 수집
-       (6페이지 헤더 + 7~9페이지 본문처럼)
-    3) '부분', '전 타입' 같은 요약행 / 면적표는 제거
+    전략
+    1) 옵션/선택사양 표는 제외
+    2) 헤더에서 주택형/약식/동호/층/세대수 위치만 대략 잡고,
+       공급금액 소계는 각 행에서 "가장 큰 금액"을 선택
+    3) (주택형, 약식표기, 동/호별, 층구분) 이 같은 행들 중에서
+       공급금액 소계가 가장 큰 한 행만 최종 결과에 남긴다.
     """
 
     results: List[Dict[str, str]] = []
@@ -964,7 +965,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     last_col_map: Dict[str, int] | None = None
     current_type = ""
     current_abbr = ""
-    current_dongho = ""  # 동/호별 forward-fill
+    current_dongho = ""
 
     def is_floor_like(s: str) -> bool:
         if not s:
@@ -986,12 +987,13 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 continue
 
             # 2) 공급금액표 후보 필터
-            has_price = ("공급금액" in all_txt and "소계" in all_txt)
+            has_price_word = ("공급금액" in all_txt) or ("분양금액" in all_txt)
             has_dongho = ("동" in all_txt and "호" in all_txt) or "동/호" in all_txt
             has_floor = "층구분" in all_txt or ("층" in all_txt and "구분" in all_txt)
             has_haedang = "해당세대" in all_txt
 
-            if not has_price and not last_col_map:
+            if not has_price_word:
+                # 공급금액 관련 단어가 없으면 다른 표일 가능성이 큼
                 continue
             if not (has_dongho or has_floor or has_haedang):
                 continue
@@ -1027,15 +1029,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         col_map["층구분"] = c
                     elif "해당세대수" in hdr or "해당세대" in hdr:
                         col_map["해당세대수"] = c
-                    elif "공급금액" in hdr and "소계" in hdr:
-                        # '공급금액 소계'가 명시된 컬럼 → 일단 후보로 설정
-                        col_map["공급금액 소계"] = c
-                    elif "소계" in hdr:
-                        # 여러 '소계' 중에서는 항상 가장 오른쪽(마지막)을 사용
-                        col_map["공급금액 소계"] = c
-
-                if "공급금액 소계" not in col_map:
-                    continue
 
                 last_col_map = col_map.copy()
 
@@ -1049,6 +1042,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
                 col_map = last_col_map.copy()
 
+                # 상단 몇 줄을 스캔해 동/층/세대 위치만 보정
                 tmp_map: Dict[str, int] = {}
                 max_head_rows = min(5, df2.shape[0])
 
@@ -1064,17 +1058,12 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         tmp_map["층구분"] = c
                     elif "해당세대수" in hdr or "해당세대" in hdr:
                         tmp_map["해당세대수"] = c
-                    elif "공급금액" in hdr and "소계" in hdr:
-                        tmp_map["공급금액 소계"] = c
-                    elif "소계" in hdr:
-                        tmp_map["공급금액 소계"] = c  # 가장 오른쪽 소계가 덮어쓰게 함
 
                 col_map.update(tmp_map)
+                df2 = df2  # 이름 맞추기용
 
-                if not (col_map.get("동/호별") or col_map.get("층구분") or col_map.get("해당세대수")):
-                    continue
-                if "공급금액 소계" not in col_map:
-                    continue
+            if not col_map:
+                continue
 
             # ---------------------- 데이터 행 파싱 ----------------------
             start_row = 1 if header_idx is not None else 0
@@ -1085,32 +1074,30 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
 
                 if "주택형" in row_txt and ("약식표기" in row_txt or "약식" in row_txt):
                     continue
-                if "합계" in row_txt:
+                if "합계" in row_txt or "전타입" in row_txt or "부분" in row_txt:
                     continue
 
-                def get_val(idx: int | None) -> str:
-                    if idx is None or idx >= len(row):
+                def get_val_idx(row, idx: int | None) -> str:
+                    if idx is None or idx < 0 or idx >= len(row):
                         return ""
                     return str(row.iloc[idx]).strip()
 
                 # 주택형 / 약식표기
                 idx_type = col_map.get("주택형")
-                if idx_type is not None:
-                    v = get_val(idx_type)
-                    if v:
-                        current_type = v
+                v_type = get_val_idx(row, idx_type)
+                if v_type:
+                    current_type = v_type
 
                 idx_abbr = col_map.get("약식표기")
-                if idx_abbr is not None:
-                    v = get_val(idx_abbr)
-                    if v:
-                        current_abbr = v
+                v_abbr = get_val_idx(row, idx_abbr)
+                if v_abbr:
+                    current_abbr = v_abbr
 
                 # 동/호 / 층 처리
                 idx_dongho = col_map.get("동/호별")
-                raw_dongho = get_val(idx_dongho) if idx_dongho is not None else ""
+                raw_dongho = get_val_idx(row, idx_dongho)
 
-                floor_val = get_val(col_map.get("층구분")) if col_map.get("층구분") is not None else ""
+                floor_val = get_val_idx(row, col_map.get("층구분"))
 
                 if raw_dongho:
                     if is_floor_like(raw_dongho):
@@ -1120,18 +1107,52 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     else:
                         current_dongho = raw_dongho
 
-                # 층구분에 '층' 글자가 빠져 있으면 보정 (숫자 또는 범위만 있을 때)
+                # 층구분에 '층' 글자가 빠졌으면 보정
                 if floor_val:
                     fv = floor_val.replace(" ", "")
                     if ("층" not in fv) and re.search(r"\d", fv):
                         floor_val = fv + "층"
 
-                haedang_val = get_val(col_map.get("해당세대수")) if col_map.get("해당세대수") is not None else ""
-                price_val = get_val(col_map.get("공급금액 소계"))
+                # 세대수
+                haedang_val = get_val_idx(row, col_map.get("해당세대수"))
+                # 너무 큰 숫자는 세대수로 보기 어려우므로 버림
+                hae_digits = re.sub(r"[^0-9]", "", haedang_val or "")
+                if hae_digits and len(hae_digits) > 3:  # 999세대 초과면 이상치로 처리
+                    haedang_val = ""
 
-                # 공급금액이 면적처럼 너무 작으면 제거
-                amt_digits = re.sub(r"[^0-9]", "", price_val or "")
-                if not amt_digits or len(amt_digits) <= 6:
+                # ----- 공급금액 소계: 행의 우측 부분에서 가장 큰 금액 선택 -----
+                # 시작 인덱스: 세대수 다음 컬럼 또는 층구분 다음 컬럼
+                candidate_start = 0
+                if col_map.get("해당세대수") is not None:
+                    candidate_start = col_map["해당세대수"] + 1
+                elif col_map.get("층구분") is not None:
+                    candidate_start = col_map["층구분"] + 1
+
+                max_price_int = 0
+                price_val = ""
+
+                for c_idx in range(candidate_start, len(row)):
+                    cell = get_val_idx(row, c_idx)
+                    digits = re.sub(r"[^0-9]", "", cell)
+                    if not digits:
+                        continue
+                    val_int = int(digits)
+                    # 너무 작은 값(예: 100,000 이하는 옵션/수수료일 가능성이 큼)
+                    if val_int <= 100000:
+                        continue
+                    if val_int > max_price_int:
+                        max_price_int = val_int
+                        price_val = cell
+
+                # 공급금액 소계가 없으면 이 행은 스킵
+                if max_price_int == 0:
+                    continue
+
+                # 동/호, 층, 세대수 셋 다 비어 있으면 버림
+                if not (current_dongho or floor_val or haedang_val):
+                    continue
+                # 타입 정보도 없으면 버림
+                if not (current_type or current_abbr):
                     continue
 
                 rec: Dict[str, str] = {
@@ -1143,15 +1164,34 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                     "공급금액 소계": price_val,
                 }
 
-                # 동/호, 층, 해당세대수 셋 다 비면 버림
-                if not (rec["동/호별"] or rec["층구분"] or rec["해당세대수"]):
-                    continue
-                if not rec["주택형"] and not rec["약식표기"]:
-                    continue
-
                 results.append(rec)
 
-    return results
+    # --------- (정리 단계) 같은 동/호/층 조합 중 공급금액이 가장 큰 행만 남기기 ---------
+    dedup: Dict[Tuple[str, str, str, str], Dict[str, str]] = {}
+
+    for rec in results:
+        key = (
+            rec.get("주택형", ""),
+            rec.get("약식표기", ""),
+            rec.get("동/호별", ""),
+            rec.get("층구분", ""),
+        )
+        price_digits = re.sub(r"[^0-9]", "", rec.get("공급금액 소계", "") or "0")
+        price_int = int(price_digits) if price_digits else 0
+
+        if key not in dedup:
+            dedup[key] = rec
+        else:
+            old_price_digits = re.sub(
+                r"[^0-9]", "", dedup[key].get("공급금액 소계", "") or "0"
+            )
+            old_price_int = int(old_price_digits) if old_price_digits else 0
+            if price_int > old_price_int:
+                dedup[key] = rec
+
+    final_rows = list(dedup.values())
+    return final_rows
+
 
 
 
