@@ -963,14 +963,15 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
     를 추출한다.
 
     특징
-    1) 옵션/확장비/대지비 등은 가능하면 제외
-    2) 6페이지 헤더 + 7~9페이지 본문처럼, 헤더 없는 표도 직전 헤더(col_map)를 재사용
+    1) 옵션/확장비 표는 전부 제외
+    2) 6페이지 헤더 + 7~9페이지 본문처럼, 헤더 없는 표는 직전 헤더(col_map)를 재사용
     3) 세대수는 3자리 이하 숫자(1~999)만 인정
-    4) 공급금액은 1천만 이상(숫자 7자리 이상)만 가격으로 인정
+    4) 공급금액은 1천만 이상(숫자 7자리 이상)만 인정
     """
 
     results: List[Dict[str, str]] = []
 
+    # 직전에 본 "완전한 헤더" 테이블 정보
     last_col_map: Dict[str, int] | None = None
     last_ncols: int | None = None
 
@@ -981,34 +982,19 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
         if not s:
             return False
         t = str(s).replace(" ", "")
-        return "층" in t and ("동" not in t and "호" not in t)
+        return "층" in t and "동" not in t and "호" not in t
 
     for page_idx, page in enumerate(pdf.pages):
         tables = page.extract_tables() or []
-        for table_idx, table in enumerate(tables):
+        for table in tables:
             if not table or len(table) < 2:
                 continue
 
             df = pd.DataFrame(table).fillna("")
-            all_txt = "".join(df.astype(str).values.ravel()).replace(" ", "")
+            all_txt = "".join(df.astype(str).values.ravel())
 
             # 1) 옵션/선택사양 표 통째로 제외
             if any(k in all_txt for k in ["옵션", "선택품목", "선택사양"]):
-                continue
-
-            has_price_keyword = ("공급금액" in all_txt or "분양금액" in all_txt or "분양가격" in all_txt) and "소계" in all_txt
-            has_floor_or_house = (
-                "층구분" in all_txt
-                or ("층" in all_txt and "구분" in all_txt)
-                or "동/호" in all_txt
-                or ("동" in all_txt and "호" in all_txt)
-                or "해당세대" in all_txt
-            )
-
-            # 헤더를 아직 못 찾았고, 가격 키워드도 없으면 이 표는 공급금액표가 아닐 확률이 큼
-            if not has_price_keyword and not last_col_map:
-                continue
-            if not has_floor_or_house:
                 continue
 
             # --------------------------
@@ -1028,9 +1014,12 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 df2 = df.iloc[header_idx:].reset_index(drop=True)
                 ncols = df2.shape[1]
 
+                header_texts: List[str] = []
+
                 for c in range(ncols):
                     hdr = "".join(df2.iloc[0:4, c].astype(str).tolist())
                     h = hdr.replace(" ", "").replace("\n", "")
+                    header_texts.append(h)
 
                     if "주택형" in h:
                         col_map["주택형"] = c
@@ -1042,33 +1031,46 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         col_map["층구분"] = c
                     elif "해당세대" in h:
                         col_map["해당세대수"] = c
-                    elif (
-                        ("공급금액" in h or "분양금액" in h or "분양가격" in h)
-                        and "소계" in h
-                    ):
-                        # 진짜 "공급금액 소계"에만 매핑 (대지비 소계 등은 제외)
-                        col_map["공급금액 소계"] = c
 
-                if "공급금액 소계" not in col_map:
-                    # 공급금액 소계 위치를 못 찾으면 이 표는 스킵
+                # ---- 공급금액 소계 열 결정 ----
+                price_idx: int | None = None
+
+                # (1) '공급금액/분양금액/분양가격' + '소계' 같이 들어간 열이 있으면 그걸 사용
+                for c, h in enumerate(header_texts):
+                    if "소계" in h and (
+                        "공급금액" in h or "분양금액" in h or "분양가격" in h
+                    ):
+                        price_idx = c
+
+                # (2) 그런 열이 없으면, '소계'가 들어간 열 중 **가장 오른쪽**을 사용
+                if price_idx is None:
+                    candidates = [c for c, h in enumerate(header_texts) if "소계" in h]
+                    if candidates:
+                        price_idx = max(candidates)
+
+                if price_idx is None:
+                    # 공급금액 열을 못 찾았으면 이 표는 스킵
+                    last_col_map = None
+                    last_ncols = None
                     continue
+
+                col_map["공급금액 소계"] = price_idx
 
                 last_col_map = col_map.copy()
                 last_ncols = ncols
 
             else:
                 # --------------------------
-                # B. 헤더 없는 이어지는 표 (7~9페이지)
+                # B. 헤더 없는 이어지는 표 (7~9페이지 등)
                 # --------------------------
                 if not last_col_map:
                     continue
 
                 df2 = df.reset_index(drop=True)
                 ncols = df2.shape[1]
-
                 col_map = last_col_map.copy()
 
-                # 6페이지보다 열이 1개 적으면 → "동/호별" 열이 빠진 경우로 가정하고 인덱스 보정
+                # 6페이지보다 열이 1개 적으면 → "동/호별" 열이 빠졌다고 보고 보정
                 if last_ncols is not None and ncols == last_ncols - 1 and "동/호별" in col_map:
                     removed_idx = col_map["동/호별"]
                     col_map.pop("동/호별")
@@ -1076,10 +1078,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                         if v > removed_idx:
                             col_map[k] = v - 1
                 elif last_ncols is not None and ncols != last_ncols:
-                    # 열 구조가 너무 다르면 스킵
-                    continue
-
-                if "공급금액 소계" not in col_map:
+                    # 구조가 너무 다르면 스킵
                     continue
 
             # --------------------------
@@ -1137,7 +1136,6 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 if price:
                     pdigits = re.sub(r"[^0-9]", "", price)
                     if not pdigits or len(pdigits) < 7:
-                        # 너무 작은 숫자는 면적/수수료 등으로 보고 버림
                         price = ""
 
                 # 최소 정보 체크
@@ -1159,6 +1157,7 @@ def extract_price_table_from_tables(pdf) -> List[Dict[str, str]]:
                 results.append(rec)
 
     return results
+
 
 
 
