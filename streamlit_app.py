@@ -74,44 +74,219 @@ def extract_move_in_date(text: str):
 
 
 def extract_companies(text: str):
-    """시행사/시공사/분양대행사 추출"""
+    """시행사/시공사/분양대행사 추출 (강화 버전)"""
     companies = {"시행사": None, "시공사": None, "분양대행사": None}
     
+    # 회사명 키워드
+    company_keywords = ["조합", "건설", "㈜", "(주)", "개발", "공사", "기업", "주식회사", "디앤씨", "디엔씨"]
+    
+    # 텍스트 정규화
+    norm_text = text.replace("：", ":").replace("\n", " ")
+    
+    # 1차: 패턴 매칭
     patterns = {
-        "시행사": r"(?:사업주체|시행자|시행사)\s*[: ]\s*([^\n]+)",
-        "시공사": r"(?:시공자|시공사|시공)\s*[: ]\s*([^\n]+)",
-        "분양대행사": r"(?:분양대행사|분양대행)\s*[: ]\s*([^\n]+)"
+        "시행사": [
+            r"사업주체\s*[:\s]\s*([^\n,]+)",
+            r"시행자\s*[:\s]\s*([^\n,]+)",
+            r"시행사\s*[:\s]\s*([^\n,]+)",
+            r"사업시행자\s*[:\s]\s*([^\n,]+)",
+        ],
+        "시공사": [
+            r"시공사\s*[:\s]\s*([^\n,]+)",
+            r"시공자\s*[:\s]\s*([^\n,]+)",
+            r"시공\s*[:\s]\s*([^\n,]+(?:건설|공사|기업)[^\n,]*)",
+        ],
+        "분양대행사": [
+            r"분양대행사\s*[:\s]\s*([^\n,]+)",
+            r"분양대행\s*[:\s]\s*([^\n,]+)",
+        ]
     }
     
-    for role, pattern in patterns.items():
-        match = re.search(pattern, text)
-        if match:
-            name = match.group(1).strip()
-            # 회사명 정규화
-            if any(k in name for k in ["조합", "건설", "㈜", "(주)", "개발", "공사"]):
-                companies[role] = name[:50]  # 너무 긴 경우 자르기
+    for role, pats in patterns.items():
+        for pattern in pats:
+            match = re.search(pattern, norm_text)
+            if match:
+                name = match.group(1).strip()
+                # 불필요한 텍스트 제거
+                name = re.sub(r'\s+', ' ', name)
+                name = name.split('※')[0].strip()
+                name = name.split('(단')[0].strip()
+                name = name.split('법인')[0].strip() if '법인' in name and len(name) > 20 else name
+                
+                if any(k in name for k in company_keywords) and len(name) <= 50:
+                    companies[role] = name
+                    break
     
     return companies
 
 
-def extract_schedule(text: str):
-    """청약 일정 추출"""
-    schedule = []
+def extract_companies_from_table(pdf):
+    """PDF 테이블에서 회사 정보 추출"""
+    companies = {"시행사": None, "시공사": None, "분양대행사": None}
     
-    patterns = [
-        (r"입주자\s*모집공고.*?(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})", "입주자모집공고일"),
-        (r"특별공급.*?(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})", "특별공급 접수일"),
-        (r"1순위.*?(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})", "일반공급 1순위 접수일"),
-        (r"2순위.*?(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})", "일반공급 2순위 접수일"),
-        (r"당첨자\s*발표.*?(\d{4}[.\-]\d{1,2}[.\-]\d{1,2})", "당첨자 발표일"),
-    ]
+    company_keywords = ["조합", "건설", "㈜", "(주)", "개발", "공사", "기업", "주식회사", "디앤씨"]
     
-    for pattern, name in patterns:
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            schedule.append({"일정": name, "날짜": match.group(1)})
+    # 마지막 15페이지에서 검색 (회사정보는 보통 뒤쪽에 있음)
+    start_page = max(0, len(pdf.pages) - 15)
     
-    return schedule
+    for page_idx in range(start_page, len(pdf.pages)):
+        page = pdf.pages[page_idx]
+        text = page.extract_text() or ""
+        
+        # 사업주체/시공사 키워드가 있는 페이지에서만 분석
+        if not ("사업주체" in text or "시공사" in text or "시공" in text):
+            continue
+        
+        tables = page.extract_tables() or []
+        
+        for table in tables:
+            if not table or len(table) < 2:
+                continue
+            
+            all_text = ' '.join(' '.join(str(c) for c in row if c) for row in table)
+            
+            # 회사정보 테이블인지 확인
+            if not ("사업주체" in all_text or "시행" in all_text) or "시공" not in all_text:
+                continue
+            
+            # 헤더 찾기
+            for r_idx, row in enumerate(table[:3]):
+                row_text = ' '.join(str(c).replace(' ', '') for c in row if c)
+                
+                if "사업주체" in row_text or "시행" in row_text:
+                    # 이 행을 헤더로, 다음 행에서 데이터 추출
+                    header_cols = {}
+                    for c_idx, cell in enumerate(row):
+                        cell_clean = str(cell).replace(' ', '').replace('\n', '') if cell else ''
+                        if '사업주체' in cell_clean or '시행' in cell_clean:
+                            header_cols['시행사'] = c_idx
+                        elif '시공사' in cell_clean or ('시공' in cell_clean and '분양' not in cell_clean):
+                            header_cols['시공사'] = c_idx
+                        elif '분양대행' in cell_clean:
+                            header_cols['분양대행사'] = c_idx
+                    
+                    # 데이터 행 처리
+                    for data_row in table[r_idx + 1:]:
+                        if not data_row:
+                            continue
+                        
+                        for role, col_idx in header_cols.items():
+                            if col_idx < len(data_row) and data_row[col_idx]:
+                                name = str(data_row[col_idx]).replace('\n', ' ').strip()
+                                if any(k in name for k in company_keywords) and companies[role] is None:
+                                    companies[role] = name[:50]
+                    
+                    if all(companies.values()):
+                        return companies
+    
+    return companies
+
+
+def extract_scale(text: str):
+    """단지 규모 추출 (지하/지상 층수, 동수)"""
+    scale_info = ""
+    
+    # 지하/지상 층수 패턴
+    floor_match = re.search(r'지하\s*(\d+)\s*층[^\d]*지상\s*(\d+)\s*층', text)
+    if floor_match:
+        scale_info = f"지하{floor_match.group(1)}층, 지상{floor_match.group(2)}층"
+    
+    # 동수 패턴
+    dong_match = re.search(r'(\d+)\s*개?\s*동', text)
+    if dong_match:
+        if scale_info:
+            scale_info += f", {dong_match.group(1)}개동"
+        else:
+            scale_info = f"{dong_match.group(1)}개동"
+    
+    return scale_info or None
+
+
+def extract_schedule_from_table(pdf):
+    """PDF 테이블에서 청약 일정 추출 (강화 버전)"""
+    schedule = {}
+    
+    # 일정 키워드 매핑
+    keyword_map = {
+        "입주자모집공고": "입주자모집공고일",
+        "모집공고일": "입주자모집공고일",
+        "특별공급": "특별공급 접수일",
+        "특별공급접수": "특별공급 접수일",
+        "1순위": "일반공급 1순위 접수일",
+        "일반공급1순위": "일반공급 1순위 접수일",
+        "2순위": "일반공급 2순위 접수일",
+        "일반공급2순위": "일반공급 2순위 접수일",
+        "당첨자발표": "당첨자 발표일",
+        "당첨자 발표": "당첨자 발표일",
+        "서류접수": "서류접수",
+        "계약체결": "계약체결",
+        "정당계약": "계약체결",
+    }
+    
+    date_pattern = r'(\d{4}[.]\d{1,2}[.]\d{1,2})'
+    
+    for page_idx, page in enumerate(pdf.pages[:15]):  # 앞 15페이지만
+        text = page.extract_text() or ""
+        
+        # 일정 관련 키워드가 있는 페이지에서만 분석
+        if not ("공고" in text or "접수" in text or "당첨" in text or "청약일정" in text):
+            continue
+        
+        tables = page.extract_tables() or []
+        
+        for table in tables:
+            if not table or len(table) < 2:
+                continue
+            
+            # 행 단위로 분석 (가로 형태 테이블)
+            for row in table:
+                if not row:
+                    continue
+                
+                for c_idx, cell in enumerate(row):
+                    if not cell:
+                        continue
+                    
+                    cell_clean = str(cell).replace(' ', '').replace('\n', '')
+                    
+                    for keyword, label in keyword_map.items():
+                        if keyword.replace(' ', '') in cell_clean:
+                            # 같은 행에서 날짜 찾기
+                            for other_cell in row[c_idx+1:]:
+                                if other_cell:
+                                    date_match = re.search(date_pattern, str(other_cell))
+                                    if date_match:
+                                        # 년도가 2024~2027 범위인지 확인
+                                        date_str = date_match.group(1)
+                                        year = int(date_str.split('.')[0])
+                                        if 2024 <= year <= 2027:
+                                            if label not in schedule:
+                                                schedule[label] = date_str
+                                        break
+                            
+                            # 다음 행에서 날짜 찾기 (세로 형태)
+                            row_idx = table.index(row)
+                            if row_idx + 1 < len(table):
+                                next_row = table[row_idx + 1]
+                                if c_idx < len(next_row) and next_row[c_idx]:
+                                    date_match = re.search(date_pattern, str(next_row[c_idx]))
+                                    if date_match:
+                                        date_str = date_match.group(1)
+                                        year = int(date_str.split('.')[0])
+                                        if 2024 <= year <= 2027:
+                                            if label not in schedule:
+                                                schedule[label] = date_str
+    
+    # 결과를 리스트로 변환 (순서 유지)
+    result = []
+    order = ["입주자모집공고일", "특별공급 접수일", "일반공급 1순위 접수일", 
+             "일반공급 2순위 접수일", "당첨자 발표일", "서류접수", "계약체결"]
+    
+    for label in order:
+        if label in schedule:
+            result.append({"일정": label, "날짜": schedule[label]})
+    
+    return result
 
 
 def extract_price_table(pdf, pages_to_check=None):
@@ -323,8 +498,19 @@ if uploaded_file:
                 complex_name = parse_complex_name(full_text)
                 location = parse_location(full_text)
                 move_in = extract_move_in_date(full_text)
+                scale = extract_scale(full_text)  # 규모 정보 추가
+                
+                # 회사 정보 - 텍스트 + 테이블에서 추출
                 companies = extract_companies(full_text)
-                schedule = extract_schedule(full_text)
+                table_companies = extract_companies_from_table(pdf)
+                # 테이블에서 추출한 정보로 보완
+                for role in ["시행사", "시공사", "분양대행사"]:
+                    if not companies.get(role) and table_companies.get(role):
+                        companies[role] = table_companies[role]
+                
+                # 청약 일정 - 테이블에서 추출
+                schedule = extract_schedule_from_table(pdf)
+                
                 price_data = extract_price_table(pdf)
                 supply_data = extract_supply_table(pdf)
                 
@@ -346,6 +532,7 @@ if uploaded_file:
                     | **단지명** | {complex_name or 'N/A'} |
                     | **공급위치** | {location or 'N/A'} |
                     | **총 세대수** | {total_units}세대 |
+                    | **규모** | {scale or 'N/A'} |
                     | **입주예정일** | {move_in or 'N/A'} |
                     """)
                 
@@ -396,6 +583,7 @@ if uploaded_file:
                         ["단지명", complex_name or ""],
                         ["공급위치", location or ""],
                         ["총 세대수", f"{total_units}세대"],
+                        ["규모", scale or ""],
                         ["입주예정일", move_in or ""],
                         ["시행사", companies.get('시행사') or ""],
                         ["시공사", companies.get('시공사') or ""],
