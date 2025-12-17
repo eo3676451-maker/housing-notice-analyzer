@@ -399,21 +399,9 @@ def extract_price_table(pdf, pages_to_check=None):
                 except Exception as e:
                     continue
     
-    # 중복 제거 (동/라인 + 층 + 세대수 + 분양가 합계 기준)
-    seen = set()
-    unique_data = []
-    for item in price_data:
-        key = (
-            item.get("동/라인", ""),
-            item.get("층", ""),
-            item.get("세대수", ""),
-            item.get("분양가 합계", 0)
-        )
-        if key not in seen:
-            seen.add(key)
-            unique_data.append(item)
-    
-    return unique_data
+    # 중복 제거 제거 - 원본 순서 그대로 모든 행 유지
+    # (같은 층/금액이지만 다른 동에 속한 행들이 있을 수 있음)
+    return price_data
 
 
 
