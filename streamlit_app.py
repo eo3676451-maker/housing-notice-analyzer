@@ -183,23 +183,34 @@ def extract_companies_from_table(pdf):
 
 
 def extract_scale(text: str):
-    """단지 규모 추출 (지하/지상 층수, 동수)"""
-    scale_info = ""
+    """공급규모 전체 텍스트 추출"""
     
-    # 지하/지상 층수 패턴
-    floor_match = re.search(r'지하\s*(\d+)\s*층[^\d]*지상\s*(\d+)\s*층', text)
+    # "공급규모" 키워드가 있는 라인 전체 추출
+    for line in text.splitlines():
+        line = line.strip()
+        if "공급규모" in line:
+            # ■ 공급규모 : 다음 내용 추출
+            cleaned = line.replace("■", "").replace("●", "").strip()
+            cleaned = cleaned.replace("공급규모", "").replace(":", "").strip()
+            if cleaned and len(cleaned) > 10:
+                return cleaned
+    
+    # 대체 패턴: 지하/지상/동 정보 조합
+    scale_parts = []
+    
+    floor_match = re.search(r'지하\s*(\d+)\s*층[^\d]*지상[^\d]*최고?\s*(\d+)\s*층', text)
     if floor_match:
-        scale_info = f"지하{floor_match.group(1)}층, 지상{floor_match.group(2)}층"
+        scale_parts.append(f"지하 {floor_match.group(1)}층, 지상 최고 {floor_match.group(2)}층")
     
-    # 동수 패턴
     dong_match = re.search(r'(\d+)\s*개?\s*동', text)
     if dong_match:
-        if scale_info:
-            scale_info += f", {dong_match.group(1)}개동"
-        else:
-            scale_info = f"{dong_match.group(1)}개동"
+        scale_parts.append(f"{dong_match.group(1)}개동")
     
-    return scale_info or None
+    total_match = re.search(r'총\s*(\d+)\s*세대', text.replace(',', ''))
+    if total_match:
+        scale_parts.append(f"총 {total_match.group(1)}세대")
+    
+    return ', '.join(scale_parts) if scale_parts else None
 
 
 def extract_schedule_from_table(pdf):
@@ -294,17 +305,24 @@ def extract_price_table(pdf, pages_to_check=None):
     price_data = []
     
     # 공급금액 관련 페이지 먼저 찾기
-    price_pages = []
+    price_pages = set()
     for i, page in enumerate(pdf.pages):
         text = page.extract_text() or ""
         if ("공급금액" in text or "분양금액" in text) and ("주택형" in text or "타입" in text or "동" in text):
-            price_pages.append(i)
+            price_pages.add(i)
+            # 다음 페이지도 추가 (연속 페이지 지원)
+            if i + 1 < len(pdf.pages):
+                price_pages.add(i + 1)
+            # 이전 페이지도 추가 (혹시 헤더가 이전 페이지에 있는 경우)
+            if i > 0:
+                price_pages.add(i - 1)
     
     if not price_pages:
         # 키워드로 못 찾으면 앞 20페이지 검색
-        price_pages = list(range(min(20, len(pdf.pages))))
+        price_pages = set(range(min(20, len(pdf.pages))))
     
-    for page_idx in price_pages:
+    # 정렬해서 순서대로 처리
+    for page_idx in sorted(price_pages):
         page = pdf.pages[page_idx]
         tables = page.extract_tables()
         
@@ -315,8 +333,14 @@ def extract_price_table(pdf, pages_to_check=None):
             # 테이블 전체 텍스트 확인
             all_text = ' '.join(' '.join(str(c) for c in row if c) for row in table)
             
-            # 금액표인지 확인 (분양금액, 대지비, 건축비 키워드)
-            if not ("분양금액" in all_text or "대지비" in all_text or "공급금액" in all_text):
+            # 금액표인지 확인 (분양금액, 대지비, 건축비 키워드 또는 큰 숫자가 있는 경우)
+            has_price_keyword = ("분양금액" in all_text or "대지비" in all_text or "공급금액" in all_text)
+            
+            # 1억 이상 숫자가 여러 개 있으면 금액표로 간주
+            big_numbers = re.findall(r'\d{9,}', all_text.replace(',', ''))
+            has_big_numbers = len(big_numbers) >= 2
+            
+            if not has_price_keyword and not has_big_numbers:
                 continue
             
             # 헤더 행 찾기 (분양금액, 대지비, 건축비 등이 있는 행)
@@ -327,12 +351,11 @@ def extract_price_table(pdf, pages_to_check=None):
                     header_row_idx = r_idx
                     break
             
-            if header_row_idx is None:
-                # 헤더를 못 찾으면 두번째 행을 헤더로 가정
-                header_row_idx = 1
+            # 헤더 없으면 첫 행부터 처리 (연속 페이지 지원)
+            start_row = header_row_idx + 1 if header_row_idx is not None else 0
             
-            # 데이터 행 처리 (헤더 다음 행부터)
-            for row in table[header_row_idx + 1:]:
+            # 데이터 행 처리
+            for row in table[start_row:]:
                 if len(row) < 6:
                     continue
                 
