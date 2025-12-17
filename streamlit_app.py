@@ -356,84 +356,46 @@ def extract_price_table(pdf, pages_to_check=None):
             
             # 데이터 행 처리
             for row in table[start_row:]:
-                if len(row) < 6:
+                if len(row) < 8:
                     continue
                 
                 try:
-                    # 금액 값이 있는 셀 찾기 (8자리 이상 숫자, 쉼표 포함 가능)
-                    price_values = []
-                    price_indices = []
+                    # 고정 인덱스 기반 추출 (테이블 구조 분석 결과)
+                    # [0] 약식표기, [1] 공급면적, [2] 동별라인, [3] 층, [4] 세대수
+                    # [5] 대지비, [6] 건축비, [7] 분양금액 합계
                     
-                    for idx, cell in enumerate(row):
-                        cell_str = str(cell).replace(',', '').replace(' ', '').strip() if cell else ''
-                        # 1억 이상 금액 (9자리 이상)
-                        if cell_str.isdigit() and len(cell_str) >= 9 and int(cell_str) >= 100000000:
-                            price_values.append(int(cell_str))
-                            price_indices.append(idx)
+                    # 분양금액 합계 확인 (인덱스 7)
+                    total_str = str(row[7]).replace(',', '').replace(' ', '').strip() if row[7] else ''
                     
-                    if len(price_values) >= 1:
-                        # 가장 큰 값을 분양가 합계로 간주
-                        total_price = max(price_values)
-                        total_idx = price_indices[price_values.index(total_price)]
-                        
-                        # 동/라인, 층, 세대수 찾기 (금액 앞쪽 컬럼들)
-                        dong_line = ""
-                        floor = ""
-                        units = ""
-                        land_price = 0
-                        build_price = 0
-                        housing_type = ""
-                        
-                        # 주택형 찾기 (숫자.숫자 패턴)
-                        for idx, cell in enumerate(row[:total_idx]):
-                            cell_str = str(cell).strip() if cell else ''
-                            if re.match(r'\d{2,3}\.\d+', cell_str):
-                                housing_type = cell_str
-                                break
-                            elif re.match(r'^[4-9]\d$', cell_str):  # 59, 84 같은 약식 표기
-                                housing_type = cell_str
-                        
-                        # 층 정보 찾기
-                        for idx, cell in enumerate(row):
-                            cell_str = str(cell).strip() if cell else ''
-                            if '층' in cell_str or re.match(r'^\d{1,2}$', cell_str) or '~' in cell_str:
-                                if not cell_str.replace(',', '').isdigit() or len(cell_str) < 5:
-                                    floor = cell_str
-                                    break
-                        
-                        # 동/라인 정보 찾기
-                        for idx, cell in enumerate(row):
-                            cell_str = str(cell).replace('\n', ' ').strip() if cell else ''
-                            if '동' in cell_str or '라인' in cell_str:
-                                dong_line = cell_str
-                                break
-                        
-                        # 세대수 찾기 (1~3자리 숫자)
-                        for idx, cell in enumerate(row):
-                            cell_str = str(cell).strip() if cell else ''
-                            if cell_str.isdigit() and 1 <= int(cell_str) <= 500:
-                                units = cell_str
-                                break
-                        
-                        # 대지비, 건축비 찾기 (합계보다 작은 금액들)
-                        other_prices = [p for p in price_values if p < total_price]
-                        if len(other_prices) >= 2:
-                            other_prices.sort(reverse=True)
-                            build_price = other_prices[0]
-                            land_price = other_prices[1]
-                        elif len(other_prices) == 1:
-                            land_price = other_prices[0]
-                        
-                        price_data.append({
-                            "주택형": housing_type if housing_type else "",
-                            "동/라인": dong_line,
-                            "층": floor,
-                            "세대수": units,
-                            "대지비": land_price,
-                            "건축비": build_price,
-                            "분양가 합계": total_price
-                        })
-                        
+                    # 분양금액이 없으면 스킵
+                    if not total_str.isdigit() or int(total_str) < 100000000:
+                        continue
+                    
+                    total_price = int(total_str)
+                    
+                    # 각 필드 추출
+                    housing_type = str(row[0]).strip() if row[0] else ""
+                    dong_line = str(row[2]).replace('\n', ' ').strip() if row[2] else ""
+                    floor = str(row[3]).strip() if row[3] else ""
+                    units = str(row[4]).strip() if row[4] else ""
+                    
+                    # 대지비, 건축비
+                    land_str = str(row[5]).replace(',', '').strip() if row[5] else ''
+                    build_str = str(row[6]).replace(',', '').strip() if row[6] else ''
+                    
+                    land_price = int(land_str) if land_str.isdigit() else 0
+                    build_price = int(build_str) if build_str.isdigit() else 0
+                    
+                    price_data.append({
+                        "주택형": housing_type,
+                        "동/라인": dong_line,
+                        "층": floor,
+                        "세대수": units,
+                        "대지비": land_price,
+                        "건축비": build_price,
+                        "분양가 합계": total_price
+                    })
+                    
                 except Exception as e:
                     continue
     
