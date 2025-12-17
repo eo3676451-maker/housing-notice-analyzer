@@ -121,20 +121,22 @@ def extract_companies(text: str):
 
 
 def extract_companies_from_table(pdf):
-    """PDF 테이블에서 회사 정보 추출"""
+    """PDF 테이블에서 회사 정보 추출 (강화된 버전)"""
     companies = {"시행사": None, "시공사": None, "분양대행사": None}
     
-    company_keywords = ["조합", "건설", "㈜", "(주)", "개발", "공사", "기업", "주식회사", "디앤씨"]
+    # 회사명으로 인정되는 키워드
+    company_keywords = ["조합", "건설", "㈜", "(주)", "개발", "공사", "기업", "주식회사", "디앤씨", "태영", "한화", "현대", "GS", "롯데", "대우", "포스코", "SK"]
     
-    # 마지막 15페이지에서 검색 (회사정보는 보통 뒤쪽에 있음)
-    start_page = max(0, len(pdf.pages) - 15)
+    # 회사명이 아닌 텍스트 패턴
+    exclude_patterns = ["사업", "경과", "규정", "적용", "승인", "분양", "입주", "취득", "이전", "이하", "기준"]
     
-    for page_idx in range(start_page, len(pdf.pages)):
+    # 앞/뒤 페이지 모두 검색
+    for page_idx in range(len(pdf.pages)):
         page = pdf.pages[page_idx]
         text = page.extract_text() or ""
         
-        # 사업주체/시공사 키워드가 있는 페이지에서만 분석
-        if not ("사업주체" in text or "시공사" in text or "시공" in text):
+        # 사업주체/시공 키워드가 있는 페이지에서만 분석
+        if not ("사업주체" in text or "시공사" in text or "시공자" in text):
             continue
         
         tables = page.extract_tables() or []
@@ -145,39 +147,48 @@ def extract_companies_from_table(pdf):
             
             all_text = ' '.join(' '.join(str(c) for c in row if c) for row in table)
             
-            # 회사정보 테이블인지 확인
-            if not ("사업주체" in all_text or "시행" in all_text) or "시공" not in all_text:
+            # 시공 키워드가 있는 테이블
+            if "시공" not in all_text:
                 continue
             
-            # 헤더 찾기
-            for r_idx, row in enumerate(table[:3]):
-                row_text = ' '.join(str(c).replace(' ', '') for c in row if c)
+            # 각 행에서 키-값 형태로 추출
+            for row in table:
+                if not row or len(row) < 2:
+                    continue
                 
-                if "사업주체" in row_text or "시행" in row_text:
-                    # 이 행을 헤더로, 다음 행에서 데이터 추출
-                    header_cols = {}
-                    for c_idx, cell in enumerate(row):
-                        cell_clean = str(cell).replace(' ', '').replace('\n', '') if cell else ''
-                        if '사업주체' in cell_clean or '시행' in cell_clean:
-                            header_cols['시행사'] = c_idx
-                        elif '시공사' in cell_clean or ('시공' in cell_clean and '분양' not in cell_clean):
-                            header_cols['시공사'] = c_idx
-                        elif '분양대행' in cell_clean:
-                            header_cols['분양대행사'] = c_idx
+                for c_idx, cell in enumerate(row):
+                    if not cell:
+                        continue
                     
-                    # 데이터 행 처리
-                    for data_row in table[r_idx + 1:]:
-                        if not data_row:
-                            continue
+                    cell_text = str(cell).replace('\n', ' ').replace(' ', '')
+                    
+                    # 다음 셀에서 회사명 찾기
+                    if c_idx + 1 < len(row) and row[c_idx + 1]:
+                        next_cell = str(row[c_idx + 1]).replace('\n', ' ').strip()
                         
-                        for role, col_idx in header_cols.items():
-                            if col_idx < len(data_row) and data_row[col_idx]:
-                                name = str(data_row[col_idx]).replace('\n', ' ').strip()
-                                if any(k in name for k in company_keywords) and companies[role] is None:
-                                    companies[role] = name[:50]
-                    
-                    if all(companies.values()):
-                        return companies
+                        # 시공사/시공자 키워드
+                        if ('시공사' in cell_text or '시공자' in cell_text) and '분양' not in cell_text:
+                            if any(k in next_cell for k in company_keywords):
+                                if not any(e in next_cell for e in exclude_patterns):
+                                    if len(next_cell) <= 50 and companies["시공사"] is None:
+                                        companies["시공사"] = next_cell
+                        
+                        # 사업주체/시행사
+                        elif '사업주체' in cell_text or '시행자' in cell_text or '시행사' in cell_text:
+                            if any(k in next_cell for k in company_keywords):
+                                if not any(e in next_cell for e in exclude_patterns):
+                                    if len(next_cell) <= 50 and companies["시행사"] is None:
+                                        companies["시행사"] = next_cell
+                        
+                        # 분양대행사
+                        elif '분양대행' in cell_text:
+                            if any(k in next_cell for k in company_keywords):
+                                if not any(e in next_cell for e in exclude_patterns):
+                                    if len(next_cell) <= 50 and companies["분양대행사"] is None:
+                                        companies["분양대행사"] = next_cell
+        
+        if all(v for v in companies.values()):
+            break
     
     return companies
 
@@ -352,38 +363,85 @@ def extract_price_table(pdf, pages_to_check=None):
                     break
             
             # 헤더 없으면 첫 행부터 처리 (연속 페이지 지원)
+            # 헤더에서 컬럼 위치 동적 감지
+            col_map = {"대지비": -1, "건축비": -1, "합계": -1, "층": -1, "세대수": -1, "동": -1, "주택형": -1, "타입": -1}
+            
+            if header_row_idx is not None:
+                header_row = table[header_row_idx]
+                for c_idx, cell in enumerate(header_row):
+                    cell_text = str(cell).replace(' ', '').replace('\n', '') if cell else ''
+                    if '대지비' in cell_text:
+                        col_map["대지비"] = c_idx
+                    elif '건축비' in cell_text:
+                        col_map["건축비"] = c_idx
+                    elif '계' in cell_text and col_map["합계"] == -1:
+                        col_map["합계"] = c_idx
+                    elif '층' in cell_text and '세대' not in cell_text:
+                        col_map["층"] = c_idx
+                    elif '세대' in cell_text:
+                        col_map["세대수"] = c_idx
+                    elif '동' in cell_text or '라인' in cell_text:
+                        col_map["동"] = c_idx
+                    elif '타입' in cell_text:
+                        col_map["타입"] = c_idx
+                    elif '주택형' in cell_text or '약식' in cell_text:
+                        col_map["주택형"] = c_idx
+            
+            # 헤더가 없거나 못 찾으면 기본값 사용
+            if col_map["합계"] == -1:
+                # 11컬럼(한화 포레나) vs 19컬럼(서면 어반센트) 구분
+                if len(table[0]) >= 15:
+                    col_map = {"주택형": 0, "타입": 1, "동": 3, "층": 4, "세대수": 5, "대지비": 6, "건축비": 7, "합계": 8}
+                else:
+                    col_map = {"주택형": 0, "타입": -1, "동": 2, "층": 3, "세대수": 4, "대지비": 5, "건축비": 6, "합계": 7}
+            
             start_row = header_row_idx + 1 if header_row_idx is not None else 0
             
             # 데이터 행 처리
             for row in table[start_row:]:
-                if len(row) < 8:
+                if len(row) < 7:
                     continue
                 
                 try:
-                    # 고정 인덱스 기반 추출 (테이블 구조 분석 결과)
-                    # [0] 약식표기, [1] 공급면적, [2] 동별라인, [3] 층, [4] 세대수
-                    # [5] 대지비, [6] 건축비, [7] 분양금액 합계
+                    # 합계 컬럼에서 분양금액 추출
+                    total_idx = col_map["합계"] if col_map["합계"] >= 0 else 7
+                    if total_idx >= len(row):
+                        continue
                     
-                    # 분양금액 합계 확인 (인덱스 7)
-                    total_str = str(row[7]).replace(',', '').replace(' ', '').strip() if row[7] else ''
+                    total_str = str(row[total_idx]).replace(',', '').replace(' ', '').strip() if row[total_idx] else ''
                     
-                    # 분양금액이 없으면 스킵
                     if not total_str.isdigit() or int(total_str) < 100000000:
                         continue
                     
                     total_price = int(total_str)
                     
-                    # 각 필드 추출
-                    housing_type = str(row[0]).strip() if row[0] else ""
-                    dong_line = str(row[2]).replace('\n', ' ').strip() if row[2] else ""
-                    floor = str(row[3]).strip() if row[3] else ""
-                    units = str(row[4]).strip() if row[4] else ""
+                    # 주택형 추출 (타입 컬럼 우선, 없으면 주택형 컬럼)
+                    housing_type = ""
+                    if col_map["타입"] >= 0 and col_map["타입"] < len(row) and row[col_map["타입"]]:
+                        housing_type = str(row[col_map["타입"]]).strip()
+                    if not housing_type and col_map["주택형"] >= 0 and col_map["주택형"] < len(row) and row[col_map["주택형"]]:
+                        housing_type = str(row[col_map["주택형"]]).strip()
                     
-                    # 대지비, 건축비
-                    land_str = str(row[5]).replace(',', '').strip() if row[5] else ''
-                    build_str = str(row[6]).replace(',', '').strip() if row[6] else ''
+                    # 동/라인
+                    dong_idx = col_map["동"] if col_map["동"] >= 0 else 2
+                    dong_line = str(row[dong_idx]).replace('\n', ' ').strip() if dong_idx < len(row) and row[dong_idx] else ""
                     
+                    # 층
+                    floor_idx = col_map["층"] if col_map["층"] >= 0 else 3
+                    floor = str(row[floor_idx]).strip() if floor_idx < len(row) and row[floor_idx] else ""
+                    
+                    # 세대수
+                    units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
+                    units = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
+                    
+                    # 대지비
+                    land_idx = col_map["대지비"] if col_map["대지비"] >= 0 else 5
+                    land_str = str(row[land_idx]).replace(',', '').strip() if land_idx < len(row) and row[land_idx] else ''
                     land_price = int(land_str) if land_str.isdigit() else 0
+                    
+                    # 건축비
+                    build_idx = col_map["건축비"] if col_map["건축비"] >= 0 else 6
+                    build_str = str(row[build_idx]).replace(',', '').strip() if build_idx < len(row) and row[build_idx] else ''
                     build_price = int(build_str) if build_str.isdigit() else 0
                     
                     price_data.append({
