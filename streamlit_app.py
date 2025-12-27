@@ -181,6 +181,15 @@ def extract_companies_from_table(pdf):
                                 name = name.replace('"', '').replace("'", '').replace('"', '').replace('"', '').strip()
                                 if any(k in name for k in company_keywords) and companies[role] is None:
                                     companies[role] = name[:50]
+                    # 상호 행이 없으면 헤더 바로 다음 행에서 추출 (쌍용 형태)
+                    elif row_label == '' or row_label is None:
+                        for role, col_idx in header_map.items():
+                            if col_idx < len(row) and row[col_idx]:
+                                name = str(row[col_idx]).replace('\n', ' ').strip()
+                                name = name.replace('"', '').replace("'", '').replace('"', '').replace('"', '').strip()
+                                if any(k in name for k in company_keywords) and companies[role] is None:
+                                    companies[role] = name[:50]
+                        break  # 첫 번째 데이터 행만 처리
             
             # 방법 2: 가로 형태 (키-값이 같은 행에 있음)
             for row in table:
