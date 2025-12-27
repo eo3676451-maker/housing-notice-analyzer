@@ -640,13 +640,16 @@ if uploaded_file:
                 move_in = extract_move_in_date(full_text)
                 scale = extract_scale(full_text)  # 규모 정보 추가
                 
-                # 회사 정보 - 텍스트 + 테이블에서 추출
-                companies = extract_companies(full_text)
+                # 회사 정보 - 테이블 우선, 텍스트로 보완
                 table_companies = extract_companies_from_table(pdf)
-                # 테이블에서 추출한 정보로 보완
+                text_companies = extract_companies(full_text)
+                # 테이블 우선, 텍스트로 보완
+                companies = {"시행사": None, "시공사": None, "분양대행사": None}
                 for role in ["시행사", "시공사", "분양대행사"]:
-                    if not companies.get(role) and table_companies.get(role):
+                    if table_companies.get(role):
                         companies[role] = table_companies[role]
+                    elif text_companies.get(role):
+                        companies[role] = text_companies[role]
                 
                 # 청약 일정 - 테이블에서 추출
                 schedule = extract_schedule_from_table(pdf)
