@@ -437,6 +437,11 @@ def extract_price_table(pdf, pages_to_check=None):
                     header_row = table[h_idx]
                     for c_idx, cell in enumerate(header_row):
                         cell_text = str(cell).replace(' ', '').replace('\n', '') if cell else ''
+                        
+                        # 너무 긴 셀은 헤더가 아님 (설명 텍스트 제외)
+                        if len(cell_text) > 30:
+                            continue
+                        
                         if '대지비' in cell_text and col_map["대지비"] == -1:
                             col_map["대지비"] = c_idx
                         elif '건축비' in cell_text and col_map["건축비"] == -1:
