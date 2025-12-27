@@ -593,9 +593,7 @@ if uploaded_file:
                     df_price = pd.DataFrame(price_data)
                     
                     # 금액 포맷팅
-                    df_price['분양가 합계'] = df_price['분양가 합계'].apply(lambda x: f"{x:,}원")
-                    df_price['대지비'] = df_price['대지비'].apply(lambda x: f"{x:,}원" if x > 0 else "")
-                    df_price['건축비'] = df_price['건축비'].apply(lambda x: f"{x:,}원" if x > 0 else "")
+                    df_price['분양가'] = df_price['분양가'].apply(lambda x: f"{x:,}원")
                     
                     st.dataframe(df_price, use_container_width=True, hide_index=True)
                 else:
