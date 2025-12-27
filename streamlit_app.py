@@ -112,6 +112,8 @@ def extract_companies(text: str):
                 name = name.split('※')[0].strip()
                 name = name.split('(단')[0].strip()
                 name = name.split('법인')[0].strip() if '법인' in name and len(name) > 20 else name
+                # 불필요 문자 제거
+                name = name.replace('"', '').replace("'", '').replace('"', '').replace('"', '').strip()
                 
                 if any(k in name for k in company_keywords) and len(name) <= 50:
                     companies[role] = name
@@ -495,28 +497,43 @@ def extract_price_table(pdf, pages_to_check=None):
                     
                     # 세대수
                     units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
-                    units_cell = str(row[units_idx]).replace('\n', ' ').strip() if units_idx < len(row) and row[units_idx] else ""
+                    units_cell = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
                     
-                    # 특수 구조: 한 셀에 여러 분양가가 공백으로 구분된 경우
-                    # 예: "640,610,000 645,900,000 652,100,000"
+                    # 분양가 (합계) - 줄바꿈 또는 공백으로 분리
+                    total_raw = str(row[total_idx]).strip() if row[total_idx] else ""
+                    
+                    # 줄바꿈으로 분리된 경우 처리
+                    if '\n' in total_raw:
+                        price_strs = total_raw.split('\n')
+                    else:
+                        price_strs = total_raw.split()
+                    
                     prices = []
-                    for price_str in total_cell.split():
+                    for price_str in price_strs:
                         price_clean = price_str.replace(',', '').strip()
                         if price_clean.isdigit() and int(price_clean) >= 100000000:
                             prices.append(int(price_clean))
                     
                     if not prices:
                         # 단일 값 시도
-                        price_clean = total_cell.replace(',', '').replace(' ', '').strip()
+                        price_clean = total_raw.replace(',', '').replace(' ', '').replace('\n', '').strip()
                         if price_clean.isdigit() and int(price_clean) >= 100000000:
                             prices = [int(price_clean)]
                     
                     if not prices:
                         continue
                     
-                    # 층 정보 분리 (여러 층이 있는 경우)
-                    floors = [f.strip() for f in floor_cell.split() if f.strip()] if floor_cell else [""]
-                    units_list = [u.strip() for u in units_cell.split() if u.strip()] if units_cell else [""]
+                    # 층 정보 분리 (줄바꿈 또는 공백)
+                    if '\n' in floor_cell:
+                        floors = [f.strip() for f in floor_cell.split('\n') if f.strip()]
+                    else:
+                        floors = [floor_cell] if floor_cell else [""]
+                    
+                    # 세대수 분리 (줄바꿈 또는 공백)
+                    if '\n' in units_cell:
+                        units_list = [u.strip() for u in units_cell.split('\n') if u.strip()]
+                    else:
+                        units_list = [units_cell] if units_cell else [""]
                     
                     # 분양가 수와 층/세대수 수가 맞으면 각각 매칭
                     if len(prices) == len(floors) and len(prices) == len(units_list):
@@ -529,14 +546,17 @@ def extract_price_table(pdf, pages_to_check=None):
                                 "분양가": price
                             })
                     else:
-                        # 수가 안 맞으면 첫 번째 분양가만 사용
-                        price_data.append({
-                            "주택형": housing_type,
-                            "동/라인": dong_line,
-                            "층": floor_cell,
-                            "세대수": units_cell,
-                            "분양가": prices[0]
-                        })
+                        # 수가 안 맞으면 각 분양가별로 행 생성
+                        for i, price in enumerate(prices):
+                            floor_val = floors[i] if i < len(floors) else floors[0] if floors else ""
+                            units_val = units_list[i] if i < len(units_list) else units_list[0] if units_list else ""
+                            price_data.append({
+                                "주택형": housing_type,
+                                "동/라인": dong_line,
+                                "층": floor_val,
+                                "세대수": units_val,
+                                "분양가": price
+                            })
                     
                 except Exception as e:
                     continue
