@@ -439,24 +439,12 @@ def extract_price_table(pdf, pages_to_check=None):
                     units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
                     units = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
                     
-                    # 대지비
-                    land_idx = col_map["대지비"] if col_map["대지비"] >= 0 else 5
-                    land_str = str(row[land_idx]).replace(',', '').strip() if land_idx < len(row) and row[land_idx] else ''
-                    land_price = int(land_str) if land_str.isdigit() else 0
-                    
-                    # 건축비
-                    build_idx = col_map["건축비"] if col_map["건축비"] >= 0 else 6
-                    build_str = str(row[build_idx]).replace(',', '').strip() if build_idx < len(row) and row[build_idx] else ''
-                    build_price = int(build_str) if build_str.isdigit() else 0
-                    
                     price_data.append({
                         "주택형": housing_type,
                         "동/라인": dong_line,
                         "층": floor,
                         "세대수": units,
-                        "대지비": land_price,
-                        "건축비": build_price,
-                        "분양가 합계": total_price
+                        "분양가": total_price
                     })
                     
                 except Exception as e:
