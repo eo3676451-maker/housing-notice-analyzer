@@ -454,8 +454,11 @@ def extract_price_table(pdf, pages_to_check=None):
             if col_map["합계"] == -1:
                 # 컬럼 수에 따라 기본 매핑
                 num_cols = len(table[0]) if table else 0
-                if num_cols >= 15:
-                    # 16+ 컬럼: 동래 푸르지오 (16), 서면 어반센트 (19)
+                if num_cols >= 18:
+                    # 18 컬럼: 해링턴 플레이스 (약식표기, 동별, 공급세대수, 층구분, 해당세대수, 대지비, 건축비, 계...)
+                    col_map = {"주택형": 0, "타입": -1, "동": 1, "층": 3, "세대수": 4, "대지비": 5, "건축비": 6, "합계": 7}
+                elif num_cols >= 15:
+                    # 16 컬럼: 동래 푸르지오
                     col_map = {"주택형": 0, "타입": -1, "동": 1, "층": 2, "세대수": 3, "대지비": 4, "건축비": 5, "합계": 6}
                 else:
                     # 11 컬럼: 한화 포레나
@@ -464,6 +467,10 @@ def extract_price_table(pdf, pages_to_check=None):
             start_row = header_row_idx + 1 if header_row_idx is not None else 0
             
             # 데이터 행 처리
+            # 이전 행 정보 기억 (연속 데이터 지원)
+            prev_housing_type = ""
+            prev_dong_line = ""
+            
             for row in table[start_row:]:
                 if len(row) < 5:
                     continue
@@ -483,17 +490,29 @@ def extract_price_table(pdf, pages_to_check=None):
                     # 주택형 추출 (타입 컬럼 우선, 없으면 주택형 컬럼)
                     housing_type = ""
                     if col_map["타입"] >= 0 and col_map["타입"] < len(row) and row[col_map["타입"]]:
-                        housing_type = str(row[col_map["타입"]]).strip()
+                        housing_type = str(row[col_map["타입"]]).replace('\n', ' ').strip()
                     if not housing_type and col_map["주택형"] >= 0 and col_map["주택형"] < len(row) and row[col_map["주택형"]]:
-                        housing_type = str(row[col_map["주택형"]]).strip()
+                        housing_type = str(row[col_map["주택형"]]).replace('\n', ' ').strip()
+                    
+                    # 빈 셀이면 이전 행 값 사용
+                    if not housing_type and prev_housing_type:
+                        housing_type = prev_housing_type
+                    if housing_type:
+                        prev_housing_type = housing_type
                     
                     # 동/라인
                     dong_idx = col_map["동"] if col_map["동"] >= 0 else 2
                     dong_line = str(row[dong_idx]).replace('\n', ' ').strip() if dong_idx < len(row) and row[dong_idx] else ""
                     
+                    # 빈 셀이면 이전 행 값 사용
+                    if not dong_line and prev_dong_line:
+                        dong_line = prev_dong_line
+                    if dong_line:
+                        prev_dong_line = dong_line
+                    
                     # 층
                     floor_idx = col_map["층"] if col_map["층"] >= 0 else 3
-                    floor_cell = str(row[floor_idx]).replace('\n', ' ').strip() if floor_idx < len(row) and row[floor_idx] else ""
+                    floor_cell = str(row[floor_idx]).strip() if floor_idx < len(row) and row[floor_idx] else ""
                     
                     # 세대수
                     units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
