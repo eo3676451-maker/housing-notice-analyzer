@@ -467,16 +467,18 @@ def extract_price_table(pdf, pages_to_check=None):
             # 테이블 전체 텍스트 확인
             all_text = ' '.join(' '.join(str(c) for c in row if c) for row in table)
             
-            # 공급세대표(특별공급/일반공급)는 금액표가 아님 - 제외
-            if "특별공급" in all_text or "일반공급" in all_text:
-                continue
-            
-            # 금액표인지 확인 (분양금액, 대지비, 건축비 키워드 또는 큰 숫자가 있는 경우)
-            has_price_keyword = ("분양금액" in all_text or "대지비" in all_text or "공급금액" in all_text)
-            
             # 1억 이상 숫자가 여러 개 있으면 금액표로 간주
             big_numbers = re.findall(r'\d{9,}', all_text.replace(',', ''))
             has_big_numbers = len(big_numbers) >= 2
+            
+            # 공급세대표(특별공급/일반공급)는 금액표가 아님 - 단, 가격이 많으면 금액표로 처리
+            if "특별공급" in all_text or "일반공급" in all_text:
+                # 1억+ 가격이 10개 이상이면 금액표로 인식 (페이지 7 같은 경우)
+                if len(big_numbers) < 10:
+                    continue
+            
+            # 금액표인지 확인 (분양금액, 대지비, 건축비 키워드 또는 큰 숫자가 있는 경우)
+            has_price_keyword = ("분양금액" in all_text or "대지비" in all_text or "공급금액" in all_text)
             
             if not has_price_keyword and not has_big_numbers:
                 continue
@@ -528,7 +530,10 @@ def extract_price_table(pdf, pages_to_check=None):
             if col_map["합계"] == -1:
                 # 컬럼 수에 따라 기본 매핑
                 num_cols = len(table[0]) if table else 0
-                if num_cols >= 19:
+                if num_cols >= 27:
+                    # 27 컬럼: 쌍용 공급세대+금액 통합표 (페이지 7, 59A 포함)
+                    col_map = {"주택형": 0, "타입": 1, "동": 4, "층": 5, "세대수": 7, "대지비": 8, "건축비": 10, "합계": 11}
+                elif num_cols >= 19:
                     # 19 컬럼: 쌍용 더플래티넘 (주택형, 타입, 총세대수, 동, 층, 세대수, 대지비, 건축비, 소계...)
                     col_map = {"주택형": 0, "타입": 1, "동": 3, "층": 4, "세대수": 5, "대지비": 6, "건축비": 7, "합계": 8}
                 elif num_cols >= 18:
