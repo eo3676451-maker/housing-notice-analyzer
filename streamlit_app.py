@@ -231,13 +231,21 @@ def extract_companies_from_table(pdf):
             if "사업주체" not in text or "시공" not in text:
                 continue
             
-            # 텍스트에서 건설사 키워드가 있는 단어 찾기
+            # 텍스트에서 건설사 패턴이 있는 단어 찾기
+            # 유효한 패턴: "XXX건설(주)", "㈜XXX건설", "XXX건설㈜" 등
             for word in text.split():
-                # 건설사 키워드 포함하고, 조합이 아닌 경우
-                if ("건설" in word or "㈜" in word) and "조합" not in word:
-                    # 불필요 문자 제거
-                    word = word.replace('"', '').replace("'", '').strip()
-                    if len(word) >= 3 and len(word) <= 20:
+                word = word.replace('"', '').replace("'", '').strip()
+                
+                # 제외 패턴: 사업계획, 허가 등
+                if any(ex in word for ex in ["사업계획", "허가", "승인", "기준", "등록"]):
+                    continue
+                
+                # 건설사 패턴: (건설 포함) AND ((주) 또는 ㈜ 포함)
+                is_construction = "건설" in word and ("(주)" in word or "㈜" in word)
+                
+                # 조합이 아닌 경우에만
+                if is_construction and "조합" not in word:
+                    if len(word) >= 4 and len(word) <= 25:
                         companies["시공사"] = word
                         break
             
