@@ -125,10 +125,7 @@ def extract_companies_from_table(pdf):
     companies = {"시행사": None, "시공사": None, "분양대행사": None}
     
     # 회사명으로 인정되는 키워드
-    company_keywords = ["조합", "건설", "㈜", "(주)", "개발", "공사", "기업", "주식회사", "디앤씨", "태영", "한화", "현대", "GS", "롯데", "대우", "포스코", "SK"]
-    
-    # 회사명이 아닌 텍스트 패턴
-    exclude_patterns = ["사업", "경과", "규정", "적용", "승인", "분양", "입주", "취득", "이전", "이하", "기준"]
+    company_keywords = ["조합", "건설", "㈜", "(주)", "개발", "공사", "기업", "주식회사", "디앤씨", "태영", "한화", "현대", "GS", "롯데", "대우", "포스코", "SK", "에스알"]
     
     # 앞/뒤 페이지 모두 검색
     for page_idx in range(len(pdf.pages)):
@@ -147,11 +144,41 @@ def extract_companies_from_table(pdf):
             
             all_text = ' '.join(' '.join(str(c) for c in row if c) for row in table)
             
-            # 시공 키워드가 있는 테이블
-            if "시공" not in all_text:
+            # 시공/사업주체 키워드가 있는 테이블
+            if "시공" not in all_text and "사업주체" not in all_text:
                 continue
             
-            # 각 행에서 키-값 형태로 추출
+            # 방법 1: 세로 형태 (헤더 행에 사업주체/시공사, 다음 행에 회사명)
+            # 예: 행0 = [구분, 사업주체, 시공사, 분양대행사]
+            #     행1 = [상호, 조합이름, 건설회사, 분양대행]
+            header_row = table[0]
+            header_map = {}
+            
+            for c_idx, cell in enumerate(header_row):
+                cell_text = str(cell).replace('\n', ' ').replace(' ', '') if cell else ''
+                if '사업주체' in cell_text or '시행' in cell_text:
+                    header_map['시행사'] = c_idx
+                elif '시공사' in cell_text or '시공자' in cell_text:
+                    header_map['시공사'] = c_idx
+                elif '분양대행' in cell_text:
+                    header_map['분양대행사'] = c_idx
+            
+            # 헤더를 찾았으면 상호 행에서 회사명 추출
+            if header_map:
+                for row in table[1:]:
+                    if not row:
+                        continue
+                    row_label = str(row[0]).replace('\n', ' ').replace(' ', '') if row and row[0] else ''
+                    
+                    # "상호" 또는 "회사명" 행에서 추출
+                    if '상호' in row_label or '회사명' in row_label or '회사' in row_label:
+                        for role, col_idx in header_map.items():
+                            if col_idx < len(row) and row[col_idx]:
+                                name = str(row[col_idx]).replace('\n', ' ').strip()
+                                if any(k in name for k in company_keywords) and companies[role] is None:
+                                    companies[role] = name[:50]
+            
+            # 방법 2: 가로 형태 (키-값이 같은 행에 있음)
             for row in table:
                 if not row or len(row) < 2:
                     continue
@@ -166,28 +193,19 @@ def extract_companies_from_table(pdf):
                     if c_idx + 1 < len(row) and row[c_idx + 1]:
                         next_cell = str(row[c_idx + 1]).replace('\n', ' ').strip()
                         
-                        # 시공사/시공자 키워드
-                        if ('시공사' in cell_text or '시공자' in cell_text) and '분양' not in cell_text:
-                            if any(k in next_cell for k in company_keywords):
-                                if not any(e in next_cell for e in exclude_patterns):
-                                    if len(next_cell) <= 50 and companies["시공사"] is None:
-                                        companies["시공사"] = next_cell
-                        
-                        # 사업주체/시행사
-                        elif '사업주체' in cell_text or '시행자' in cell_text or '시행사' in cell_text:
-                            if any(k in next_cell for k in company_keywords):
-                                if not any(e in next_cell for e in exclude_patterns):
-                                    if len(next_cell) <= 50 and companies["시행사"] is None:
-                                        companies["시행사"] = next_cell
-                        
-                        # 분양대행사
-                        elif '분양대행' in cell_text:
-                            if any(k in next_cell for k in company_keywords):
-                                if not any(e in next_cell for e in exclude_patterns):
-                                    if len(next_cell) <= 50 and companies["분양대행사"] is None:
-                                        companies["분양대행사"] = next_cell
+                        if any(k in next_cell for k in company_keywords):
+                            if '시공사' in cell_text or '시공자' in cell_text:
+                                if companies["시공사"] is None:
+                                    companies["시공사"] = next_cell[:50]
+                            elif '사업주체' in cell_text or '시행' in cell_text:
+                                if companies["시행사"] is None:
+                                    companies["시행사"] = next_cell[:50]
+                            elif '분양대행' in cell_text:
+                                if companies["분양대행사"] is None:
+                                    companies["분양대행사"] = next_cell[:50]
         
-        if all(v for v in companies.values()):
+        # 시공사와 시행사 모두 찾으면 종료
+        if companies["시공사"] and companies["시행사"]:
             break
     
     return companies
