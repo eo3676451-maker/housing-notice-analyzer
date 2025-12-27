@@ -175,6 +175,8 @@ def extract_companies_from_table(pdf):
                         for role, col_idx in header_map.items():
                             if col_idx < len(row) and row[col_idx]:
                                 name = str(row[col_idx]).replace('\n', ' ').strip()
+                                # 불필요 문자 제거
+                                name = name.replace('"', '').replace("'", '').replace('"', '').replace('"', '').strip()
                                 if any(k in name for k in company_keywords) and companies[role] is None:
                                     companies[role] = name[:50]
             
@@ -192,6 +194,8 @@ def extract_companies_from_table(pdf):
                     # 다음 셀에서 회사명 찾기
                     if c_idx + 1 < len(row) and row[c_idx + 1]:
                         next_cell = str(row[c_idx + 1]).replace('\n', ' ').strip()
+                        # 불필요 문자 제거
+                        next_cell = next_cell.replace('"', '').replace("'", '').replace('"', '').replace('"', '').strip()
                         
                         if any(k in next_cell for k in company_keywords):
                             if '시공사' in cell_text or '시공자' in cell_text:
@@ -263,7 +267,8 @@ def extract_schedule_from_table(pdf):
         "정당계약": "계약체결",
     }
     
-    date_pattern = r'(\d{4}[.]\d{1,2}[.]\d{1,2})'
+    # 날짜 패턴 (25.11.10 또는 2025.11.10 형태)
+    date_pattern = r'(\d{2,4}[.]\d{1,2}[.]\d{1,2})'
     
     for page_idx, page in enumerate(pdf.pages[:15]):  # 앞 15페이지만
         text = page.extract_text() or ""
@@ -278,7 +283,40 @@ def extract_schedule_from_table(pdf):
             if not table or len(table) < 2:
                 continue
             
-            # 행 단위로 분석 (가로 형태 테이블)
+            # 방법 1: 헤더 행 + 일정 행 형태
+            # 예: 행0 = [구분, 입주자모집공고일, 특별공급 접수일, ...]
+            #     행1 = [일정, 25.10.31, 25.11.10, ...]
+            header_row = table[0]
+            header_map = {}  # 컬럼 인덱스 -> 일정 레이블
+            
+            for c_idx, cell in enumerate(header_row):
+                if not cell:
+                    continue
+                cell_clean = str(cell).replace(' ', '').replace('\n', '')
+                for keyword, label in keyword_map.items():
+                    if keyword.replace(' ', '') in cell_clean:
+                        header_map[c_idx] = label
+                        break
+            
+            # 헤더를 찾았으면 다음 행에서 날짜 추출
+            if header_map:
+                for row in table[1:]:
+                    if not row:
+                        continue
+                    row_label = str(row[0]).replace(' ', '').replace('\n', '') if row[0] else ''
+                    # "일정" 또는 "일 정" 행에서 추출
+                    if '일정' in row_label or row_label == '':
+                        for col_idx, label in header_map.items():
+                            if col_idx < len(row) and row[col_idx]:
+                                date_match = re.search(date_pattern, str(row[col_idx]))
+                                if date_match and label not in schedule:
+                                    date_str = date_match.group(1)
+                                    # 2자리 년도를 4자리로 변환
+                                    if len(date_str.split('.')[0]) == 2:
+                                        date_str = '20' + date_str
+                                    schedule[label] = date_str
+            
+            # 방법 2: 기존 방식 (가로 형태 - 키워드와 날짜가 같은 행에 있음)
             for row in table:
                 if not row:
                     continue
@@ -296,8 +334,9 @@ def extract_schedule_from_table(pdf):
                                 if other_cell:
                                     date_match = re.search(date_pattern, str(other_cell))
                                     if date_match:
-                                        # 년도가 2024~2027 범위인지 확인
                                         date_str = date_match.group(1)
+                                        if len(date_str.split('.')[0]) == 2:
+                                            date_str = '20' + date_str
                                         year = int(date_str.split('.')[0])
                                         if 2024 <= year <= 2027:
                                             if label not in schedule:
@@ -312,6 +351,8 @@ def extract_schedule_from_table(pdf):
                                     date_match = re.search(date_pattern, str(next_row[c_idx]))
                                     if date_match:
                                         date_str = date_match.group(1)
+                                        if len(date_str.split('.')[0]) == 2:
+                                            date_str = '20' + date_str
                                         year = int(date_str.split('.')[0])
                                         if 2024 <= year <= 2027:
                                             if label not in schedule:
@@ -422,7 +463,7 @@ def extract_price_table(pdf, pages_to_check=None):
             
             # 데이터 행 처리
             for row in table[start_row:]:
-                if len(row) < 7:
+                if len(row) < 5:
                     continue
                 
                 try:
@@ -431,12 +472,11 @@ def extract_price_table(pdf, pages_to_check=None):
                     if total_idx >= len(row):
                         continue
                     
-                    total_str = str(row[total_idx]).replace(',', '').replace(' ', '').strip() if row[total_idx] else ''
+                    total_cell = str(row[total_idx]).replace('\n', ' ').strip() if row[total_idx] else ''
                     
-                    if not total_str.isdigit() or int(total_str) < 100000000:
+                    # 분양가가 없으면 스킵
+                    if not total_cell:
                         continue
-                    
-                    total_price = int(total_str)
                     
                     # 주택형 추출 (타입 컬럼 우선, 없으면 주택형 컬럼)
                     housing_type = ""
@@ -451,19 +491,52 @@ def extract_price_table(pdf, pages_to_check=None):
                     
                     # 층
                     floor_idx = col_map["층"] if col_map["층"] >= 0 else 3
-                    floor = str(row[floor_idx]).strip() if floor_idx < len(row) and row[floor_idx] else ""
+                    floor_cell = str(row[floor_idx]).replace('\n', ' ').strip() if floor_idx < len(row) and row[floor_idx] else ""
                     
                     # 세대수
                     units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
-                    units = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
+                    units_cell = str(row[units_idx]).replace('\n', ' ').strip() if units_idx < len(row) and row[units_idx] else ""
                     
-                    price_data.append({
-                        "주택형": housing_type,
-                        "동/라인": dong_line,
-                        "층": floor,
-                        "세대수": units,
-                        "분양가": total_price
-                    })
+                    # 특수 구조: 한 셀에 여러 분양가가 공백으로 구분된 경우
+                    # 예: "640,610,000 645,900,000 652,100,000"
+                    prices = []
+                    for price_str in total_cell.split():
+                        price_clean = price_str.replace(',', '').strip()
+                        if price_clean.isdigit() and int(price_clean) >= 100000000:
+                            prices.append(int(price_clean))
+                    
+                    if not prices:
+                        # 단일 값 시도
+                        price_clean = total_cell.replace(',', '').replace(' ', '').strip()
+                        if price_clean.isdigit() and int(price_clean) >= 100000000:
+                            prices = [int(price_clean)]
+                    
+                    if not prices:
+                        continue
+                    
+                    # 층 정보 분리 (여러 층이 있는 경우)
+                    floors = [f.strip() for f in floor_cell.split() if f.strip()] if floor_cell else [""]
+                    units_list = [u.strip() for u in units_cell.split() if u.strip()] if units_cell else [""]
+                    
+                    # 분양가 수와 층/세대수 수가 맞으면 각각 매칭
+                    if len(prices) == len(floors) and len(prices) == len(units_list):
+                        for i, price in enumerate(prices):
+                            price_data.append({
+                                "주택형": housing_type,
+                                "동/라인": dong_line,
+                                "층": floors[i],
+                                "세대수": units_list[i],
+                                "분양가": price
+                            })
+                    else:
+                        # 수가 안 맞으면 첫 번째 분양가만 사용
+                        price_data.append({
+                            "주택형": housing_type,
+                            "동/라인": dong_line,
+                            "층": floor_cell,
+                            "세대수": units_cell,
+                            "분양가": prices[0]
+                        })
                     
                 except Exception as e:
                     continue
