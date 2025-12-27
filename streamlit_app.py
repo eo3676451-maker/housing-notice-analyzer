@@ -418,6 +418,10 @@ def extract_price_table(pdf, pages_to_check=None):
             # 테이블 전체 텍스트 확인
             all_text = ' '.join(' '.join(str(c) for c in row if c) for row in table)
             
+            # 공급세대표(특별공급/일반공급)는 금액표가 아님 - 제외
+            if "특별공급" in all_text or "일반공급" in all_text:
+                continue
+            
             # 금액표인지 확인 (분양금액, 대지비, 건축비 키워드 또는 큰 숫자가 있는 경우)
             has_price_keyword = ("분양금액" in all_text or "대지비" in all_text or "공급금액" in all_text)
             
