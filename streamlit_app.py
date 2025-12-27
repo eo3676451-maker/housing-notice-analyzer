@@ -775,11 +775,15 @@ if uploaded_file:
                     
                     # 일정 데이터를 테이블 형식으로 변환
                     schedule_rows = []
-                    for item, date in schedule.items():
-                        schedule_rows.append({"구분": item, "일정": date})
+                    if isinstance(schedule, dict):
+                        for item, date in schedule.items():
+                            schedule_rows.append({"구분": item, "일정": date})
+                    elif isinstance(schedule, list):
+                        schedule_rows = schedule
                     
-                    df_schedule = pd.DataFrame(schedule_rows)
-                    st.dataframe(df_schedule, use_container_width=True, hide_index=True)
+                    if schedule_rows:
+                        df_schedule = pd.DataFrame(schedule_rows)
+                        st.dataframe(df_schedule, use_container_width=True, hide_index=True)
                 
                 # 공급대상표
                 if supply_data:
