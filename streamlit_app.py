@@ -688,9 +688,12 @@ if uploaded_file:
                 price_data = extract_price_table(pdf)
                 supply_data = extract_supply_table(pdf)
                 
-                # 세대수 추출
-                total_match = re.search(r'총\s*(\d+)\s*세대', full_text.replace(',', ''))
-                total_units = total_match.group(1) if total_match else "N/A"
+                # 세대수 추출 - 일반분양 우선, 총 세대수 폴백
+                # 패턴: "일반분양 137세대" 또는 "총 271세대"
+                units_match = re.search(r'일반분양\s*(\d+)\s*세대', full_text.replace(',', ''))
+                if not units_match:
+                    units_match = re.search(r'총\s*(\d+)\s*세대', full_text.replace(',', ''))
+                total_units = units_match.group(1) if units_match else "N/A"
                 
                 # 결과 표시
                 st.success("✅ 분석 완료!")
