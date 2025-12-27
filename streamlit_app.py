@@ -445,7 +445,10 @@ def extract_price_table(pdf, pages_to_check=None):
                             col_map["합계"] = c_idx
                         elif '층' in cell_text and '세대' not in cell_text and col_map["층"] == -1:
                             col_map["층"] = c_idx
-                        elif '세대' in cell_text and col_map["세대수"] == -1:
+                        # 세대수: '해당세대' 우선, '공급세대' 제외
+                        elif ('해당' in cell_text and '세대' in cell_text) and col_map["세대수"] == -1:
+                            col_map["세대수"] = c_idx
+                        elif '세대' in cell_text and '공급' not in cell_text and col_map["세대수"] == -1:
                             col_map["세대수"] = c_idx
                         elif ('동' in cell_text or '라인' in cell_text or '동호' in cell_text) and col_map["동"] == -1:
                             col_map["동"] = c_idx
