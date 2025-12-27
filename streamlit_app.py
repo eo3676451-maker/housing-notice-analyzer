@@ -367,32 +367,37 @@ def extract_price_table(pdf, pages_to_check=None):
             col_map = {"대지비": -1, "건축비": -1, "합계": -1, "층": -1, "세대수": -1, "동": -1, "주택형": -1, "타입": -1}
             
             if header_row_idx is not None:
-                header_row = table[header_row_idx]
-                for c_idx, cell in enumerate(header_row):
-                    cell_text = str(cell).replace(' ', '').replace('\n', '') if cell else ''
-                    if '대지비' in cell_text:
-                        col_map["대지비"] = c_idx
-                    elif '건축비' in cell_text:
-                        col_map["건축비"] = c_idx
-                    elif '계' in cell_text and col_map["합계"] == -1:
-                        col_map["합계"] = c_idx
-                    elif '층' in cell_text and '세대' not in cell_text:
-                        col_map["층"] = c_idx
-                    elif '세대' in cell_text:
-                        col_map["세대수"] = c_idx
-                    elif '동' in cell_text or '라인' in cell_text:
-                        col_map["동"] = c_idx
-                    elif '타입' in cell_text:
-                        col_map["타입"] = c_idx
-                    elif '주택형' in cell_text or '약식' in cell_text:
-                        col_map["주택형"] = c_idx
+                # 헤더가 여러 줄일 수 있으므로 여러 행 검사 (0~2번째 행)
+                for h_idx in range(min(3, len(table))):
+                    header_row = table[h_idx]
+                    for c_idx, cell in enumerate(header_row):
+                        cell_text = str(cell).replace(' ', '').replace('\n', '') if cell else ''
+                        if '대지비' in cell_text and col_map["대지비"] == -1:
+                            col_map["대지비"] = c_idx
+                        elif '건축비' in cell_text and col_map["건축비"] == -1:
+                            col_map["건축비"] = c_idx
+                        elif ('계' == cell_text or '분양금액' in cell_text) and col_map["합계"] == -1:
+                            col_map["합계"] = c_idx
+                        elif '층' in cell_text and '세대' not in cell_text and col_map["층"] == -1:
+                            col_map["층"] = c_idx
+                        elif '세대' in cell_text and col_map["세대수"] == -1:
+                            col_map["세대수"] = c_idx
+                        elif ('동' in cell_text or '라인' in cell_text or '동호' in cell_text) and col_map["동"] == -1:
+                            col_map["동"] = c_idx
+                        elif '타입' in cell_text and col_map["타입"] == -1:
+                            col_map["타입"] = c_idx
+                        elif ('주택형' in cell_text or '약식' in cell_text) and col_map["주택형"] == -1:
+                            col_map["주택형"] = c_idx
             
-            # 헤더가 없거나 못 찾으면 기본값 사용
+            # 헤더가 없거나 핵심 컬럼 못 찾으면 기본값 사용
             if col_map["합계"] == -1:
-                # 11컬럼(한화 포레나) vs 19컬럼(서면 어반센트) 구분
-                if len(table[0]) >= 15:
-                    col_map = {"주택형": 0, "타입": 1, "동": 3, "층": 4, "세대수": 5, "대지비": 6, "건축비": 7, "합계": 8}
+                # 컬럼 수에 따라 기본 매핑
+                num_cols = len(table[0]) if table else 0
+                if num_cols >= 15:
+                    # 16+ 컬럼: 동래 푸르지오 (16), 서면 어반센트 (19)
+                    col_map = {"주택형": 0, "타입": -1, "동": 1, "층": 2, "세대수": 3, "대지비": 4, "건축비": 5, "합계": 6}
                 else:
+                    # 11 컬럼: 한화 포레나
                     col_map = {"주택형": 0, "타입": -1, "동": 2, "층": 3, "세대수": 4, "대지비": 5, "건축비": 6, "합계": 7}
             
             start_row = header_row_idx + 1 if header_row_idx is not None else 0
