@@ -311,8 +311,9 @@ def extract_schedule_from_table(pdf):
         "입주지정": "입주지정기간",
     }
     
-    # 날짜 패턴 (25.11.10 또는 2025.11.10 형태)
+    # 날짜 패턴 (25.11.10 또는 2025.11.10 형태, 기간 형식도 지원)
     date_pattern = r'(\d{2,4}[.]\d{1,2}[.]\d{1,2})'
+    period_pattern = r'(\d{2,4}[.]\d{1,2}[.]\d{1,2})[^\d]*~[^\d]*(\d{2,4}[.]\d{1,2}[.]\d{1,2})'
     
     for page_idx, page in enumerate(pdf.pages[:15]):  # 앞 15페이지만
         text = page.extract_text() or ""
@@ -352,13 +353,27 @@ def extract_schedule_from_table(pdf):
                     if '일정' in row_label or row_label == '':
                         for col_idx, label in header_map.items():
                             if col_idx < len(row) and row[col_idx]:
-                                date_match = re.search(date_pattern, str(row[col_idx]))
-                                if date_match and label not in schedule:
-                                    date_str = date_match.group(1)
+                                cell_text = str(row[col_idx])
+                                
+                                # 기간 형식 먼저 시도 (25.07.19 ~ 25.07.22)
+                                period_match = re.search(period_pattern, cell_text)
+                                if period_match and label not in schedule:
+                                    start_date = period_match.group(1)
+                                    end_date = period_match.group(2)
                                     # 2자리 년도를 4자리로 변환
-                                    if len(date_str.split('.')[0]) == 2:
-                                        date_str = '20' + date_str
-                                    schedule[label] = date_str
+                                    if len(start_date.split('.')[0]) == 2:
+                                        start_date = '20' + start_date
+                                    if len(end_date.split('.')[0]) == 2:
+                                        end_date = '20' + end_date
+                                    schedule[label] = f"{start_date} ~ {end_date}"
+                                else:
+                                    # 단일 날짜
+                                    date_match = re.search(date_pattern, cell_text)
+                                    if date_match and label not in schedule:
+                                        date_str = date_match.group(1)
+                                        if len(date_str.split('.')[0]) == 2:
+                                            date_str = '20' + date_str
+                                        schedule[label] = date_str
             
             # 방법 2: 기존 방식 (가로 형태 - 키워드와 날짜가 같은 행에 있음)
             for row in table:
