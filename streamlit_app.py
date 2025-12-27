@@ -296,15 +296,19 @@ def extract_schedule_from_table(pdf):
         "모집공고일": "입주자모집공고일",
         "특별공급": "특별공급 접수일",
         "특별공급접수": "특별공급 접수일",
-        "1순위": "일반공급 1순위 접수일",
-        "일반공급1순위": "일반공급 1순위 접수일",
-        "2순위": "일반공급 2순위 접수일",
-        "일반공급2순위": "일반공급 2순위 접수일",
+        "1순위": "일반공급 1순위",
+        "일반공급1순위": "일반공급 1순위",
+        "2순위": "일반공급 2순위",
+        "일반공급2순위": "일반공급 2순위",
         "당첨자발표": "당첨자 발표일",
         "당첨자 발표": "당첨자 발표일",
-        "서류접수": "서류접수",
-        "계약체결": "계약체결",
-        "정당계약": "계약체결",
+        "서류접수": "서류접수 기간",
+        "서류제출": "서류제출 기간",
+        "계약체결": "계약체결 기간",
+        "정당계약": "정당계약 기간",
+        "계약기간": "계약 기간",
+        "입주예정": "입주예정일",
+        "입주지정": "입주지정기간",
     }
     
     # 날짜 패턴 (25.11.10 또는 2025.11.10 형태)
@@ -765,10 +769,16 @@ if uploaded_file:
                     | **분양대행사** | {companies.get('분양대행사') or 'N/A'} |
                     """)
                 
-                # 청약 일정
+                # 주요 일정
                 if schedule:
-                    st.subheader("📅 청약 일정")
-                    df_schedule = pd.DataFrame(schedule)
+                    st.subheader("📅 주요 일정")
+                    
+                    # 일정 데이터를 테이블 형식으로 변환
+                    schedule_rows = []
+                    for item, date in schedule.items():
+                        schedule_rows.append({"구분": item, "일정": date})
+                    
+                    df_schedule = pd.DataFrame(schedule_rows)
                     st.dataframe(df_schedule, use_container_width=True, hide_index=True)
                 
                 # 공급대상표
