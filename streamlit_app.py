@@ -394,6 +394,10 @@ def extract_price_table(pdf, pages_to_check=None):
         price_pages = set(range(min(20, len(pdf.pages))))
     
     # 정렬해서 순서대로 처리
+    # 이전 행 정보 기억 (페이지/테이블 간 연속 데이터 지원)
+    prev_housing_type = ""
+    prev_dong_line = ""
+    
     for page_idx in sorted(price_pages):
         page = pdf.pages[page_idx]
         tables = page.extract_tables()
@@ -467,9 +471,6 @@ def extract_price_table(pdf, pages_to_check=None):
             start_row = header_row_idx + 1 if header_row_idx is not None else 0
             
             # 데이터 행 처리
-            # 이전 행 정보 기억 (연속 데이터 지원)
-            prev_housing_type = ""
-            prev_dong_line = ""
             
             for row in table[start_row:]:
                 if len(row) < 5:
