@@ -222,25 +222,24 @@ def extract_companies_from_table(pdf):
         if companies["시공사"] and companies["시행사"]:
             break
     
-    # 테이블에서 시공사 못 찾으면 텍스트에서 "회사명" 라인 파싱
-    if (companies["시공사"] is None or companies["시행사"] is None):
+    # 테이블에서 시공사 못 찾으면 텍스트에서 건설사 이름 직접 검색
+    if companies["시공사"] is None:
         for page in pdf.pages:
             text = page.extract_text() or ""
             
+            # "사업주체 및 시공사" 섹션이 있는 페이지에서만 검색
             if "사업주체" not in text or "시공" not in text:
                 continue
             
-            # "회사명" 라인에서 추출 (예: "회사명 조합이름 쌍용건설(주)")
-            for line in text.split('\n'):
-                if '회사명' in line or '상호' in line:
-                    parts = line.split()
-                    # 회사 키워드가 있는 부분 찾기
-                    for part in parts:
-                        if companies["시공사"] is None and any(k in part for k in ["건설", "㈜", "(주)", "공사", "기업"]):
-                            # 조합이 아닌 건설사 찾기
-                            if "조합" not in part:
-                                companies["시공사"] = part.replace('"', '').replace("'", '')[:50]
-                    break
+            # 텍스트에서 건설사 키워드가 있는 단어 찾기
+            for word in text.split():
+                # 건설사 키워드 포함하고, 조합이 아닌 경우
+                if ("건설" in word or "㈜" in word) and "조합" not in word:
+                    # 불필요 문자 제거
+                    word = word.replace('"', '').replace("'", '').strip()
+                    if len(word) >= 3 and len(word) <= 20:
+                        companies["시공사"] = word
+                        break
             
             if companies["시공사"]:
                 break
