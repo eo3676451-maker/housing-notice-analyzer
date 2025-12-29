@@ -635,6 +635,17 @@ def extract_price_table(pdf, pages_to_check=None):
                     units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
                     units_cell = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
                     
+                    # 폴백(text 전략) 추출 후 검증: 세대수 값이 1억 이상이면 컬럼 매핑 오류
+                    # 세대수는 보통 1~100 사이이므로 6자리 이상 숫자면 오류
+                    units_check = units_cell.split('\n')[0].replace(',', '').strip()
+                    if units_check.isdigit() and int(units_check) > 100000:
+                        # 컬럼 매핑 오류 - 층/세대수 인덱스 조정 (베뉴브 같은 경우)
+                        # 실제 데이터 구조: [0]=타입, [1]=동, [2]=층, [3]=세대수, [4]=대지비, [7]=소계
+                        floor_idx = 2
+                        units_idx = 3
+                        floor_cell = str(row[floor_idx]).strip() if floor_idx < len(row) and row[floor_idx] else ""
+                        units_cell = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
+                    
                     # 분양가 (합계) - 줄바꿈 또는 공백으로 분리
                     total_raw = str(row[total_idx]).strip() if row[total_idx] else ""
                     
