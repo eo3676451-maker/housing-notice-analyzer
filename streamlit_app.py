@@ -548,9 +548,9 @@ def extract_price_table(pdf, pages_to_check=None):
                             col_map["대지비"] = c_idx
                         elif '건축비' in cell_text and col_map["건축비"] == -1:
                             col_map["건축비"] = c_idx
-                        elif '계' == cell_text and col_map["합계"] == -1:
+                        elif ('계' == cell_text or '소계' in cell_text) and col_map["합계"] == -1:
                             col_map["합계"] = c_idx
-                        elif '층' in cell_text and '세대' not in cell_text and col_map["층"] == -1:
+                        elif ('층' in cell_text or '구분' in cell_text) and '세대' not in cell_text and '건축' not in cell_text and col_map["층"] == -1:
                             col_map["층"] = c_idx
                         # 세대수: '해당세대' 우선, '공급세대' 제외
                         elif ('해당' in cell_text and '세대' in cell_text) and col_map["세대수"] == -1:
