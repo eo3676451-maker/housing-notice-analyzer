@@ -478,9 +478,9 @@ def extract_price_table(pdf, pages_to_check=None):
         # 폴백: 테이블 데이터가 뭉친 경우 text 전략으로 재추출
         need_retry = False
         for table in (tables or []):
-            if len(table) >= 5:
-                # 데이터 행(3번째 이후)에서 non-None 컬럼 수 확인
-                for r_idx in range(3, min(6, len(table))):
+            if len(table) >= 3:  # 기존 5에서 3으로 완화 (페이지 8처럼 행수가 적은 경우 지원)
+                # 데이터 행(첫 번째 이후)에서 non-None 컬럼 수 확인
+                for r_idx in range(1, min(4, len(table))):
                     row = table[r_idx]
                     non_none_count = sum(1 for c in row if c is not None)
                     if non_none_count <= 2 and any(re.search(r'\d{9,}', str(c).replace(',', '')) for c in row if c):
@@ -658,13 +658,14 @@ def extract_price_table(pdf, pages_to_check=None):
                     prices = []
                     for price_str in price_strs:
                         price_clean = price_str.replace(',', '').strip()
-                        if price_clean.isdigit() and int(price_clean) >= 100000000:
+                        # 분양가 범위: 1억 ~ 100억 (100억 이상은 이상값으로 무시)
+                        if price_clean.isdigit() and 100000000 <= int(price_clean) <= 10000000000:
                             prices.append(int(price_clean))
                     
                     if not prices:
                         # 단일 값 시도
                         price_clean = total_raw.replace(',', '').replace(' ', '').replace('\n', '').strip()
-                        if price_clean.isdigit() and int(price_clean) >= 100000000:
+                        if price_clean.isdigit() and 100000000 <= int(price_clean) <= 10000000000:
                             prices = [int(price_clean)]
                     
                     if not prices:
