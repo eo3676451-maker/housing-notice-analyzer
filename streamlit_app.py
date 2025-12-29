@@ -313,7 +313,10 @@ def extract_schedule_from_table(pdf):
     
     # 날짜 패턴 (25.11.10 또는 2025.11.10 형태, 기간 형식도 지원)
     date_pattern = r'(\d{2,4}[.]\d{1,2}[.]\d{1,2})'
+    # 기간 패턴 1: 시작일~종료일 (둘 다 연도 있음)
     period_pattern = r'(\d{2,4}[.]\d{1,2}[.]\d{1,2})[^\d]*~[^\d]*(\d{2,4}[.]\d{1,2}[.]\d{1,2})'
+    # 기간 패턴 2: 시작일~종료일 (종료일 연도 없음, 예: 2025.10.18~10.22)
+    period_pattern_short = r'(\d{2,4}[.]\d{1,2}[.]\d{1,2})[^\d]*~[^\d]*(\d{1,2}[.]\d{1,2})[^\d]'
     
     for page_idx, page in enumerate(pdf.pages[:15]):  # 앞 15페이지만
         text = page.extract_text() or ""
@@ -367,13 +370,25 @@ def extract_schedule_from_table(pdf):
                                         end_date = '20' + end_date
                                     schedule[label] = f"{start_date} ~ {end_date}"
                                 else:
-                                    # 단일 날짜
-                                    date_match = re.search(date_pattern, cell_text)
-                                    if date_match and label not in schedule:
-                                        date_str = date_match.group(1)
-                                        if len(date_str.split('.')[0]) == 2:
-                                            date_str = '20' + date_str
-                                        schedule[label] = date_str
+                                    # 종료일 연도 없는 기간 형식 (2025.10.18~10.22)
+                                    period_short_match = re.search(period_pattern_short, cell_text)
+                                    if period_short_match and label not in schedule:
+                                        start_date = period_short_match.group(1)
+                                        end_date_short = period_short_match.group(2)  # 10.22 형태
+                                        # 시작일 연도 사용
+                                        if len(start_date.split('.')[0]) == 2:
+                                            start_date = '20' + start_date
+                                        start_year = start_date.split('.')[0]
+                                        end_date = f"{start_year}.{end_date_short}"
+                                        schedule[label] = f"{start_date} ~ {end_date}"
+                                    else:
+                                        # 단일 날짜
+                                        date_match = re.search(date_pattern, cell_text)
+                                        if date_match and label not in schedule:
+                                            date_str = date_match.group(1)
+                                            if len(date_str.split('.')[0]) == 2:
+                                                date_str = '20' + date_str
+                                            schedule[label] = date_str
             
             # 방법 2: 기존 방식 (가로 형태 - 키워드와 날짜가 같은 행에 있음)
             for row in table:
@@ -460,7 +475,30 @@ def extract_price_table(pdf, pages_to_check=None):
         page = pdf.pages[page_idx]
         tables = page.extract_tables()
         
-        for table in tables:
+        # 폴백: 테이블 데이터가 뭉친 경우 text 전략으로 재추출
+        need_retry = False
+        for table in (tables or []):
+            if len(table) >= 5:
+                # 데이터 행(3번째 이후)에서 non-None 컬럼 수 확인
+                for r_idx in range(3, min(6, len(table))):
+                    row = table[r_idx]
+                    non_none_count = sum(1 for c in row if c is not None)
+                    if non_none_count <= 2 and any(re.search(r'\d{9,}', str(c).replace(',', '')) for c in row if c):
+                        # 가격 데이터가 있는데 컬럼이 2개 이하면 뭉친 것
+                        need_retry = True
+                        break
+                if need_retry:
+                    break
+        
+        if need_retry:
+            # 커스텀 설정으로 재추출
+            tables = page.extract_tables(table_settings={
+                "vertical_strategy": "text",
+                "horizontal_strategy": "text",
+                "snap_tolerance": 5,
+            })
+        
+        for table in (tables or []):
             if len(table) < 3:
                 continue
             
