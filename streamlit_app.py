@@ -571,6 +571,9 @@ def extract_price_table(pdf, pages_to_check=None):
                 if num_cols >= 27:
                     # 27 컬럼: 쌍용 공급세대+금액 통합표 (페이지 7, 59A 포함)
                     col_map = {"주택형": 0, "타입": 1, "동": 4, "층": 5, "세대수": 7, "대지비": 8, "건축비": 10, "합계": 11}
+                elif num_cols >= 21:
+                    # 21 컬럼: 베뉴브 페이지 8 (84E, 99 타입) - 합계는 10번 인덱스
+                    col_map = {"주택형": 0, "타입": -1, "동": 1, "층": 3, "세대수": 4, "대지비": 5, "건축비": 7, "합계": 10}
                 elif num_cols >= 19:
                     # 19 컬럼: 쌍용 더플래티넘 (주택형, 타입, 총세대수, 동, 층, 세대수, 대지비, 건축비, 소계...)
                     col_map = {"주택형": 0, "타입": 1, "동": 3, "층": 4, "세대수": 5, "대지비": 6, "건축비": 7, "합계": 8}
@@ -586,47 +589,79 @@ def extract_price_table(pdf, pages_to_check=None):
             
             start_row = header_row_idx + 1 if header_row_idx is not None else 0
             
+            # 상단 공란(Backward Fill) 처리를 위한 버퍼
+            pending_rows = []
+
             # 데이터 행 처리
-            
             for row in table[start_row:]:
                 if len(row) < 5:
                     continue
                 
                 try:
-                    # 합계 컬럼에서 분양금액 추출
-                    total_idx = col_map["합계"] if col_map["합계"] >= 0 else 7
-                    if total_idx >= len(row):
-                        continue
-                    
-                    total_cell = str(row[total_idx]).replace('\n', ' ').strip() if row[total_idx] else ''
-                    
-                    # 분양가가 없으면 스킵
-                    if not total_cell:
-                        continue
-                    
-                    # 주택형 추출 (타입 컬럼 우선, 없으면 주택형 컬럼)
+                    # 1. 주택형/동 추출 및 갱신 (가격 존재 여부와 무관하게 수행)
+                    # 주택형
                     housing_type = ""
                     if col_map["타입"] >= 0 and col_map["타입"] < len(row) and row[col_map["타입"]]:
                         housing_type = str(row[col_map["타입"]]).replace('\n', ' ').strip()
                     if not housing_type and col_map["주택형"] >= 0 and col_map["주택형"] < len(row) and row[col_map["주택형"]]:
                         housing_type = str(row[col_map["주택형"]]).replace('\n', ' ').strip()
                     
-                    # 빈 셀이면 이전 행 값 사용
-                    if not housing_type and prev_housing_type:
-                        housing_type = prev_housing_type
+                    # 동/라인
+                    dong_line = ""
+                    dong_idx = col_map["동"] if col_map["동"] >= 0 else 2
+                    if dong_idx < len(row) and row[dong_idx]:
+                        dong_line = str(row[dong_idx]).replace('\n', ' ').strip()
+                    
+                    # 1.5 주택형/동 데이터 갱신 및 Backward Fill 처리
                     if housing_type:
                         prev_housing_type = housing_type
+                        # 버퍼에 있던 행들 처리 (Backward Fill)
+                        if pending_rows:
+                            for p_prices, p_dong, p_floor, p_units in pending_rows:
+                                # 이전 동 정보가 없으면 현재 행의 동 정보 사용 (같은 그룹일 가능성 높음)
+                                final_dong = p_dong if p_dong else dong_line
+                                if not final_dong and prev_dong_line:
+                                    final_dong = prev_dong_line
+
+                                # 데이터 생성 로직 (분양가별)
+                                p_floors = [f.strip() for f in p_floor.split('\n') if f.strip()] if '\n' in p_floor else ([p_floor] if p_floor else [""])
+                                p_units_list = [u.strip() for u in p_units.split('\n') if u.strip()] if '\n' in p_units else ([p_units] if p_units else [""])
+                                
+                                if len(p_prices) == len(p_floors) and len(p_prices) == len(p_units_list):
+                                    for i, price in enumerate(p_prices):
+                                        price_data.append({
+                                            "주택형": housing_type,
+                                            "동/라인": final_dong,
+                                            "층": p_floors[i],
+                                            "세대수": p_units_list[i],
+                                            "분양가": price
+                                        })
+                                else:
+                                    for i, price in enumerate(p_prices):
+                                        f_val = p_floors[i] if i < len(p_floors) else p_floors[0] if p_floors else ""
+                                        u_val = p_units_list[i] if i < len(p_units_list) else p_units_list[0] if p_units_list else ""
+                                        price_data.append({
+                                            "주택형": housing_type,
+                                            "동/라인": final_dong,
+                                            "층": f_val,
+                                            "세대수": u_val,
+                                            "분양가": price
+                                        })
+                            pending_rows = []
                     
-                    # 동/라인
-                    dong_idx = col_map["동"] if col_map["동"] >= 0 else 2
-                    dong_line = str(row[dong_idx]).replace('\n', ' ').strip() if dong_idx < len(row) and row[dong_idx] else ""
-                    
-                    # 빈 셀이면 이전 행 값 사용
-                    if not dong_line and prev_dong_line:
-                        dong_line = prev_dong_line
                     if dong_line:
                         prev_dong_line = dong_line
+
+                    # 2. 가격 데이터 추출 (가격이 없으면 여기서 continue 되거나 84D 같은 라벨행만 처리되고 끝남)
+                    total_idx = col_map["합계"] if col_map["합계"] >= 0 else 7
+                    if total_idx >= len(row):
+                        continue 
                     
+                    total_cell = str(row[total_idx]).replace('\n', ' ').strip() if row[total_idx] else ''
+                    if not total_cell:
+                        continue
+
+                    # 3. 상세 정보 추출 (층, 세대수, 가격)
                     # 층
                     floor_idx = col_map["층"] if col_map["층"] >= 0 else 3
                     floor_cell = str(row[floor_idx]).strip() if floor_idx < len(row) and row[floor_idx] else ""
@@ -635,76 +670,70 @@ def extract_price_table(pdf, pages_to_check=None):
                     units_idx = col_map["세대수"] if col_map["세대수"] >= 0 else 4
                     units_cell = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
                     
-                    # 폴백(text 전략) 추출 후 검증: 세대수 값이 1억 이상이면 컬럼 매핑 오류
-                    # 세대수는 보통 1~100 사이이므로 6자리 이상 숫자면 오류
+                    # 폴백(text 전략) 추출 후 검증
                     units_check = units_cell.split('\n')[0].replace(',', '').strip()
                     if units_check.isdigit() and int(units_check) > 100000:
-                        # 컬럼 매핑 오류 - 층/세대수 인덱스 조정 (베뉴브 같은 경우)
-                        # 실제 데이터 구조: [0]=타입, [1]=동, [2]=층, [3]=세대수, [4]=대지비, [7]=소계
                         floor_idx = 2
                         units_idx = 3
                         floor_cell = str(row[floor_idx]).strip() if floor_idx < len(row) and row[floor_idx] else ""
                         units_cell = str(row[units_idx]).strip() if units_idx < len(row) and row[units_idx] else ""
                     
-                    # 분양가 (합계) - 줄바꿈 또는 공백으로 분리
-                    total_raw = str(row[total_idx]).strip() if row[total_idx] else ""
-                    
-                    # 줄바꿈으로 분리된 경우 처리
-                    if '\n' in total_raw:
-                        price_strs = total_raw.split('\n')
+                    # 가격 파싱
+                    if '\n' in total_cell:
+                        price_strs = total_cell.split('\n')
                     else:
-                        price_strs = total_raw.split()
+                        price_strs = total_cell.split()
                     
                     prices = []
                     for price_str in price_strs:
                         price_clean = price_str.replace(',', '').strip()
-                        # 분양가 범위: 1억 ~ 100억 (100억 이상은 이상값으로 무시)
                         if price_clean.isdigit() and 100000000 <= int(price_clean) <= 10000000000:
                             prices.append(int(price_clean))
                     
                     if not prices:
-                        # 단일 값 시도
-                        price_clean = total_raw.replace(',', '').replace(' ', '').replace('\n', '').strip()
+                        price_clean = total_cell.replace(',', '').replace(' ', '').replace('\n', '').strip()
                         if price_clean.isdigit() and 100000000 <= int(price_clean) <= 10000000000:
                             prices = [int(price_clean)]
                     
                     if not prices:
                         continue
+
+                    # 4. 데이터 저장 또는 버퍼링
+                    # 현재 행에 주택형이 있거나, 이전에 설정된 주택형이 있으면 바로 저장 (Forward Fill)
+                    # 단, dong_line이 없는 경우 prev_dong_line 사용
+                    use_dong = dong_line if dong_line else prev_dong_line
+
+                    current_type = housing_type if housing_type else prev_housing_type
                     
-                    # 층 정보 분리 (줄바꿈 또는 공백)
-                    if '\n' in floor_cell:
-                        floors = [f.strip() for f in floor_cell.split('\n') if f.strip()]
+                    # 층/세대수 리스트 변환
+                    p_floors = [f.strip() for f in floor_cell.split('\n') if f.strip()] if '\n' in floor_cell else ([floor_cell] if floor_cell else [""])
+                    p_units_list = [u.strip() for u in units_cell.split('\n') if u.strip()] if '\n' in units_cell else ([units_cell] if units_cell else [""])
+
+                    if current_type:
+                        # 바로 저장
+                        if len(prices) == len(p_floors) and len(prices) == len(p_units_list):
+                            for i, price in enumerate(prices):
+                                price_data.append({
+                                    "주택형": current_type,
+                                    "동/라인": use_dong,
+                                    "층": p_floors[i],
+                                    "세대수": p_units_list[i],
+                                    "분양가": price
+                                })
+                        else:
+                            for i, price in enumerate(prices):
+                                f_val = p_floors[i] if i < len(p_floors) else p_floors[0] if p_floors else ""
+                                u_val = p_units_list[i] if i < len(p_units_list) else p_units_list[0] if p_units_list else ""
+                                price_data.append({
+                                    "주택형": current_type,
+                                    "동/라인": use_dong,
+                                    "층": f_val,
+                                    "세대수": u_val,
+                                    "분양가": price
+                                })
                     else:
-                        floors = [floor_cell] if floor_cell else [""]
-                    
-                    # 세대수 분리 (줄바꿈 또는 공백)
-                    if '\n' in units_cell:
-                        units_list = [u.strip() for u in units_cell.split('\n') if u.strip()]
-                    else:
-                        units_list = [units_cell] if units_cell else [""]
-                    
-                    # 분양가 수와 층/세대수 수가 맞으면 각각 매칭
-                    if len(prices) == len(floors) and len(prices) == len(units_list):
-                        for i, price in enumerate(prices):
-                            price_data.append({
-                                "주택형": housing_type,
-                                "동/라인": dong_line,
-                                "층": floors[i],
-                                "세대수": units_list[i],
-                                "분양가": price
-                            })
-                    else:
-                        # 수가 안 맞으면 각 분양가별로 행 생성
-                        for i, price in enumerate(prices):
-                            floor_val = floors[i] if i < len(floors) else floors[0] if floors else ""
-                            units_val = units_list[i] if i < len(units_list) else units_list[0] if units_list else ""
-                            price_data.append({
-                                "주택형": housing_type,
-                                "동/라인": dong_line,
-                                "층": floor_val,
-                                "세대수": units_val,
-                                "분양가": price
-                            })
+                        # 주택형을 아직 모르므로 버퍼에 저장 (Backward Fill 대기)
+                        pending_rows.append((prices, use_dong, floor_cell, units_cell))
                     
                 except Exception as e:
                     continue
