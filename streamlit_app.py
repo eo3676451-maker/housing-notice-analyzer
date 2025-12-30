@@ -587,8 +587,14 @@ def extract_price_table(pdf, pages_to_check=None):
                     # 11 컬럼: 한화 포레나
                     col_map = {"주택형": 0, "타입": -1, "동": 2, "층": 3, "세대수": 4, "대지비": 5, "건축비": 6, "합계": 7}
             
+            # 헤더 행에 데이터가 포함된 경우(가격 정보가 있으면) 헤더 행부터 시작
             start_row = header_row_idx + 1 if header_row_idx is not None else 0
-            
+            if header_row_idx is not None:
+                header_row_text = ' '.join(str(c) for c in table[header_row_idx] if c)
+                # 가격 데이터(9자리 이상 숫자)가 헤더에 포함되어 있으면 헤더 행도 데이터 행으로 처리
+                if re.search(r'\d{9,}', header_row_text.replace(',', '')):
+                    start_row = header_row_idx
+
             # 상단 공란(Backward Fill) 처리를 위한 버퍼
             pending_rows = []
 
@@ -601,16 +607,32 @@ def extract_price_table(pdf, pages_to_check=None):
                     # 1. 주택형/동 추출 및 갱신 (가격 존재 여부와 무관하게 수행)
                     # 주택형
                     housing_type = ""
+                    temp_type = ""
                     if col_map["타입"] >= 0 and col_map["타입"] < len(row) and row[col_map["타입"]]:
-                        housing_type = str(row[col_map["타입"]]).replace('\n', ' ').strip()
-                    if not housing_type and col_map["주택형"] >= 0 and col_map["주택형"] < len(row) and row[col_map["주택형"]]:
-                        housing_type = str(row[col_map["주택형"]]).replace('\n', ' ').strip()
+                        temp_type = str(row[col_map["타입"]]).replace('\n', ' ').strip()
+                    if not temp_type and col_map["주택형"] >= 0 and col_map["주택형"] < len(row) and row[col_map["주택형"]]:
+                        temp_type = str(row[col_map["주택형"]]).replace('\n', ' ').strip()
                     
-                    # 동/라인
+                    # 주택형 유효성 검증 (약식, 식기 등 헤더 오추출 방지)
+                    # 숫자가 포함되어 있거나, 일반적인 타입 형태(59A 등)여야 함
+                    if temp_type:
+                        for kw in ["주택형", "타입", "TYPE", "약식", "식기", "구분"]:
+                            temp_type = temp_type.replace(kw, "").strip()
+                        if re.search(r'\d', temp_type): # 숫자가 있어야 유효한 주택형으로 인정
+                            housing_type = temp_type
+
+                    # 동/라인 - 줄바꿈을 쉼표로 연결하여 통합
                     dong_line = ""
                     dong_idx = col_map["동"] if col_map["동"] >= 0 else 2
                     if dong_idx < len(row) and row[dong_idx]:
-                        dong_line = str(row[dong_idx]).replace('\n', ' ').strip()
+                        temp_dong = str(row[dong_idx]).replace('\n', ', ').strip()
+                        # 헤더 키워드 제거
+                        for kw in ["동호수", "동·호수", "라인", "구분"]:
+                            temp_dong = temp_dong.replace(kw, "").strip()
+                        # 쉼표 정리
+                        temp_dong = re.sub(r',\s*,', ',', temp_dong).strip(', ')
+                        if len(temp_dong) > 1: # 최소 2글자 이상 (단순 기호 방지)
+                            dong_line = temp_dong
                     
                     # 1.5 주택형/동 데이터 갱신 및 Backward Fill 처리
                     if housing_type:
